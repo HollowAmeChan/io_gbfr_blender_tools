@@ -29,6 +29,8 @@ class ModelBundle:
     minfo: Path
     skeleton: Path
     mmesh: Path
+    sop: Path | None
+    sop_report: dict | None
     cloth_files: tuple[ClothFileRecord, ...]
     data_tools: Path | None
 
@@ -117,6 +119,20 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
     mmesh = _existing_asset_path(root, _find_model_record(records, "mmesh", model_id))
     character_id = str(document.get("CharacterId") or model_id)
 
+    sop_report = next(
+        (record for record in document.get("SkeletonConstraints") or []
+         if str(record.get("ModelId", "")).casefold() == model_id.casefold()),
+        None,
+    )
+    sop_candidates = []
+    if sop_report and sop_report.get("Source"):
+        sop_candidates.append(_asset_path(root, sop_report["Source"]))
+    for key in ("Source", "Input"):
+        value = minfo_matches[0].get(key)
+        if value:
+            sop_candidates.append(_asset_path(root, value).with_suffix(".sop"))
+    sop = next((path.resolve() for path in sop_candidates if path.is_file()), None)
+
     cloth_files = []
     for record in document.get("ClothFiles") or []:
         category = str(record.get("Category") or "").casefold()
@@ -144,6 +160,8 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         minfo=minfo,
         skeleton=skeleton,
         mmesh=mmesh,
+        sop=sop,
+        sop_report=sop_report,
         cloth_files=tuple(cloth_files),
         data_tools=_find_data_tools(root),
     )

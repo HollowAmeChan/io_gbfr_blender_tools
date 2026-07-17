@@ -27,4 +27,22 @@ from io_gbfr_blender_tools import gbfr_cloth_blender
 batches = []
 gbfr_cloth_blender._draw_armature(armatures[0], batches)
 assert sum(len(lines) for lines, _color, _width in batches) > 0
-print(f"GBFR workspace import smoke passed: {len(state.clp_groups)} CLP / {len(state.clh_layers)} CLH")
+sop = armatures[0].gbfr_sop
+assert sop.enabled
+assert len(sop.operations) == 101
+assert sop.imported_constraint_count > 0
+assert sop.preview_operation_count > 0
+assert sop.unresolved_count == 63
+constraints = [constraint for bone in armatures[0].pose.bones for constraint in bone.constraints if constraint.name.startswith("GBFR SOP ")]
+assert len(constraints) == sop.imported_constraint_count
+bpy.context.view_layer.update()
+rest_error = max(
+    abs(armatures[0].pose.bones[bone.name].matrix[row][column] - bone.matrix_local[row][column])
+    for bone in armatures[0].data.bones for row in range(4) for column in range(4)
+)
+assert rest_error < 1e-4, rest_error
+print(
+    f"GBFR workspace import smoke passed: {len(state.clp_groups)} CLP / {len(state.clh_layers)} CLH / "
+    f"{len(sop.operations)} SOP records / {sop.preview_operation_count} guarded operations / "
+    f"{len(constraints)} approximate constraints / {sop.guarded_count} guard rejects / rest error {rest_error:.2g}"
+)

@@ -23,3 +23,12 @@ Blender 注册测试：
 ```powershell
 blender --background --python test/blender_smoke.py
 ```
+
+## SOP 骨骼约束
+
+选择身体模型 `.minfo` 时，插件还会从工作区 `source/data/model/...` 自动寻找同名 `.sop`。全部 SOP 操作都会作为只读检查数据导入 `GBFR > SOP 骨骼约束`：
+
+- 通过静止姿态自检的 `Swing/Twist 分配` 与 `Twist 提取` 会生成名称带有 `[近似]` 的 Blender `Copy Rotation` 约束；N 面板可以整体启用或静音。
+- Blender 的分轴 Copy Rotation 不能严格等价于游戏的四元数 swing/twist 公式，因此这里只用于建模和动作检查，不应被视为游戏运行结果的完整复现。
+- 自检失败的核心变体不会执行；未完全探明的 corrective 操作只显示 source、target、类型、状态和原始属性，不会生成错误约束。
+- SOP 当前是**单向导入**。模型、CLP/CLH 导出都不会修改或生成 `.sop`，N 面板也不提供 SOP 写回按钮。
