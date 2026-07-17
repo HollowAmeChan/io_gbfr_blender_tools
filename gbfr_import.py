@@ -7,10 +7,12 @@ import importlib
 from .Entities.ModelInfo import ModelInfo
 from .Entities.ModelSkeleton import ModelSkeleton
 from .utils import *
+from .gbfr_workspace import resolve_model_bundle
+
 		
 def parse_skeleton(filepath, CurCollection):
-	if os.path.isfile(os.path.splitext(filepath)[0] + ".skeleton"):
-		buf = open(os.path.splitext(filepath)[0] + ".skeleton", 'rb').read()
+	if os.path.isfile(filepath):
+		buf = open(filepath, 'rb').read()
 		buf = bytearray(buf)
 		skeleton = ModelSkeleton.GetRootAs(buf, 0) # Get skeleton info root in byte array
 		
@@ -74,6 +76,10 @@ def parse_skeleton(filepath, CurCollection):
 		for x in range(skeleton.BodyLength()):
 			pbone = armature_obj.pose.bones[x]
 			ebone = armature_obj.data.bones[x]
+			try:
+				ebone["gbfr_bone_id"] = int(ebone.name[1:], 16) if ebone.name.startswith("_") else -1
+			except ValueError:
+				ebone["gbfr_bone_id"] = -1
 			pbone.rotation_mode = 'QUATERNION'
 			pbone.rotation_quaternion = SkelTable[x]["Rot"]
 			pbone.location = SkelTable[x]["Pos"]
@@ -110,7 +116,9 @@ def parse_mesh_info(filepath):
 
 	
 def read_some_data(context, filepath, import_scale): 
-	model_name = os.path.splitext(os.path.basename(filepath))[0] # Get model name from filename
+	bundle = resolve_model_bundle(filepath)
+	filepath = str(bundle.minfo)
+	model_name = bundle.model_id
 
 	CurCollection = bpy.data.collections.new(f"GBFR Model Collection_{model_name}") # Create new collection
 	bpy.context.scene.collection.children.link(CurCollection)
@@ -120,7 +128,7 @@ def read_some_data(context, filepath, import_scale):
 		obj.select_set(False) #Deselect everything
 	
 	mesh_info = parse_mesh_info(filepath) # Parse the mesh info
-	armature = parse_skeleton(filepath, CurCollection) # Parse the skeleton
+	armature = parse_skeleton(str(bundle.skeleton), CurCollection) # Parse the skeleton
 	
 	DeformJointsTable = []
 	# Get bone weights indices (which bones have weight)
@@ -129,11 +137,10 @@ def read_some_data(context, filepath, import_scale):
 	
 	LOD = mesh_info.Lodinfos(0) # Get mesh LOD info of LOD0
 	
-	try: 
-		f = open(os.path.splitext(filepath)[0] + ".mmesh", 'rb')
-	except Exception as err: 
-		raise FileNotFoundError("ERROR: Put the model's .mmesh file in the same folder as the .minfo.\n" 
-			+ "The model's original .mmesh can be found under: data/model_streaming/lod0/<modelID>.mmesh")
+	try:
+		f = open(bundle.mmesh, 'rb')
+	except Exception as err:
+		raise FileNotFoundError(f"工作区 LOD0 mmesh 不可读取: {bundle.mmesh}") from err
 	
 	vert_count = LOD.VertCount()
 	face_count = LOD.PolyCountX3() // 3
@@ -329,6 +336,9 @@ def read_some_data(context, filepath, import_scale):
 		utils_select_active(armature)
 		bpy.context.object.scale = (import_scale, import_scale, import_scale) # Scale the armature
 		bpy.ops.object.transform_apply(location=True, rotation=True, scale=True) # Apply Transforms to armature
+
+		from .gbfr_cloth_blender import populate_cloth_state
+		populate_cloth_state(armature, bundle)
 
 	return {'FINISHED'}
 

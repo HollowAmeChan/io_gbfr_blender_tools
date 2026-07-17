@@ -1,10 +1,10 @@
 bl_info = {
     "name": "Granblue Fantasy Relink Blender Tools",
     "author": "WistfulHopes & AlphaSatanOmega",
-    "version": (1, 1, 0),
+    "version": (1, 2, 0),
     "blender": (4, 0, 0),
     "location": "File > Import/Export | View 3D > Tool Shelf > GBFR",
-    "description": "Tool to import & export models from Granblue Fantasy Relink",
+    "description": "Workspace-aware model and CLP/CLH editing tools for Granblue Fantasy Relink",
     "warning": "",
     "category": "Import-Export",
     "doc_url": "https://github.com/WistfulHopes/GBFRBlenderTools?tab=readme-ov-file#gbfr-blender-tools"
@@ -22,13 +22,22 @@ if "bpy" in locals():
         importlib.reload(gbfr_panel)
     if "utils" in locals():
         importlib.reload(utils)
+    if "gbfr_workspace" in locals():
+        importlib.reload(gbfr_workspace)
+    if "gbfr_cloth_format" in locals():
+        importlib.reload(gbfr_cloth_format)
+    if "gbfr_cloth_blender" in locals():
+        importlib.reload(gbfr_cloth_blender)
 
 import bpy
 import bmesh
 import mathutils
 import struct
 import os
-from . import gbfr_import, gbfr_export, gbfr_panel, utils
+from . import (
+    gbfr_import, gbfr_export, gbfr_panel, utils,
+    gbfr_workspace, gbfr_cloth_format, gbfr_cloth_blender,
+)
 from .Entities.ModelInfo import ModelInfo
 # from .Entities.ModelSkeleton import ModelSkeleton
 
@@ -48,20 +57,29 @@ class AddonPreferences(bpy.types.AddonPreferences):
         description="File path to flatc.exe be used for export.",
         subtype='FILE_PATH',
     )
+
+    gbfr_data_tools_path: StringProperty(
+        name="GBFRDataTools.exe filepath",
+        description="Optional override used to encode edited cloth XML to BXM",
+        subtype='FILE_PATH',
+    )
     
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "flatc_file_path")
+        layout.prop(self, "gbfr_data_tools_path")
 
 
 # Register importer & exporter
 def register():
+    bpy.utils.register_class(AddonPreferences)
     gbfr_import.register()
     gbfr_export.register()
     gbfr_panel.register()
-    bpy.utils.register_class(AddonPreferences)
+    gbfr_cloth_blender.register()
 
 def unregister():
+    gbfr_cloth_blender.unregister()
     gbfr_import.unregister()
     gbfr_export.unregister()
     gbfr_panel.unregister()

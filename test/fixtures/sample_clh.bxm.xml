@@ -1,0 +1,7 @@
+<CLOTH_AT fixture="keep">
+  <CLOTH_AT_NUM>2</CLOTH_AT_NUM>
+  <ClothCollision_LIST>
+    <ClothCollision custom="first"><dataVersion_>1</dataVersion_><id_>0</id_><p1>11</p1><p2>11</p2><weight>0</weight><radius>0.04</radius><offset1>0.01 0 0 0</offset1><offset2>0 0 0 0</offset2><capsule>-1</capsule><notUseInBattle>0</notUseInBattle><notUseInIdle>0</notUseInIdle><futureCollision>keep</futureCollision></ClothCollision>
+    <ClothCollision><dataVersion_>1</dataVersion_><id_>1</id_><p1>12</p1><p2>12</p2><weight>0</weight><radius>0.03</radius><offset1>0 0 0 0</offset1><offset2>0 0 0 0</offset2><capsule>0</capsule><notUseInBattle>0</notUseInBattle><notUseInIdle>0</notUseInIdle></ClothCollision>
+  </ClothCollision_LIST>
+</CLOTH_AT>

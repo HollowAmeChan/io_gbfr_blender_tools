@@ -1,0 +1,24 @@
+<CLOTH fixture="keep">
+  <CLOTH_HEADER>
+    <dataVersion_>2</dataVersion_><id_>7</id_>
+    <reboundRate_>0.1</reboundRate_><airResistance_>0.2</airResistance_><windResistance_>0.3</windResistance_>
+    <stretchy_>0.4</stretchy_><stretchyHInner_>0.5</stretchyHInner_><stretchyWOuter_>0.6</stretchyWOuter_><stretchyWInner_>0.7</stretchyWInner_>
+    <collisionLevels_>1</collisionLevels_><childTraceLevels_>2</childTraceLevels_>
+    <gravityVec_>0 -0.001 0 1</gravityVec_><gravityPartsNo_>-2</gravityPartsNo_>
+    <hitAdjustRate_>1</hitAdjustRate_><originalRate_>0</originalRate_><simulationRate4CS_>1</simulationRate4CS_>
+    <bParentGravity_>0</bParentGravity_><fixAxis_>0</fixAxis_><bNoStretchy_>0</bNoStretchy_>
+    <bWorldWindEnable_>1</bWorldWindEnable_><bAtCenter_>1</bAtCenter_><atDensity_>1</atDensity_>
+    <localGravityType_>2</localGravityType_><localGravityRate_>0.05</localGravityRate_>
+    <localGravityBlendFlg_>1</localGravityBlendFlg_><localGravityBlendRate_>0.6</localGravityBlendRate_>
+    <bLateAddMode_>0</bLateAddMode_><bNotReCalc_>0</bNotReCalc_><bHitFloorEnable_>1</bHitFloorEnable_><bBlendRateLast_>0</bBlendRateLast_>
+    <teleportResetDis_>3</teleportResetDis_><floorHeight_>0.05</floorHeight_><useCollisionFlags_>18</useCollisionFlags_>
+    <windRateFromBack_>0.25</windRateFromBack_><bIsUseWindPowUp_>1</bIsUseWindPowUp_><moveSpdRate_>0.59</moveSpdRate_>
+    <shortHairadjust_>1</shortHairadjust_><bChestParamAvailable_>0</bChestParamAvailable_><airResistance4Chest_>0.9</airResistance4Chest_><localGravityRate4Chest_>0.01</localGravityRate4Chest_>
+    <futureHeader answer="42">preserve me</futureHeader>
+  </CLOTH_HEADER>
+  <CLOTH_WK_NUM>2</CLOTH_WK_NUM>
+  <CLOTH_WK_LIST>
+    <CLOTH_WK custom="root"><dataVersion_>2</dataVersion_><no>11</no><noUp>4095</noUp><noDown>12</noDown><noSide>4095</noSide><noPoly>4095</noPoly><noFix>4095</noFix><rotLimit>0.5</rotLimit><friction>0.9</friction><gravityBlendRate_>0</gravityBlendRate_><offset>0.1 0 0 1</offset><originalRate_>0</originalRate_><weight_>1.5</weight_><thick_>0.02</thick_><windForceArea_>0</windForceArea_><jointScale_>1</jointScale_><bAllowChangeScale_>0</bAllowChangeScale_><axisAdjustRate_>1</axisAdjustRate_><futureNode>keep</futureNode></CLOTH_WK>
+    <CLOTH_WK><dataVersion_>2</dataVersion_><no>12</no><noUp>11</noUp><noDown>4095</noDown><noSide>4095</noSide><noPoly>4095</noPoly><noFix>4095</noFix><rotLimit>0.8</rotLimit><friction>0.8</friction><gravityBlendRate_>0</gravityBlendRate_><offset>0 0 0 1</offset><originalRate_>0</originalRate_><weight_>1</weight_><thick_>0.01</thick_><windForceArea_>0</windForceArea_><jointScale_>1</jointScale_><bAllowChangeScale_>0</bAllowChangeScale_><axisAdjustRate_>1</axisAdjustRate_></CLOTH_WK>
+  </CLOTH_WK_LIST>
+</CLOTH>
