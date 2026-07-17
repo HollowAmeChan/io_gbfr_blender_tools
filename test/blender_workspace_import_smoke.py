@@ -23,6 +23,21 @@ assert len(state.clp_groups) > 0
 assert len(state.clh_layers) > 0
 assert Path(state.workspace_path).name == "workspace.json"
 assert any("gbfr_bone_id" in bone for bone in armatures[0].data.bones)
+meshes = [
+    obj for obj in bpy.context.scene.objects
+    if obj.type == "MESH" and "gbfr_material_json" in obj
+]
+assert len(meshes) == 1, len(meshes)
+mesh = meshes[0]
+assert mesh["gbfr_material_applied"] > 0
+assert mesh["gbfr_material_missing"] == 0
+assert Path(mesh["gbfr_material_json"]).name == "0.mmat.json"
+for material in mesh.data.materials:
+    node_types = {node.bl_idname for node in material.node_tree.nodes}
+    assert {"ShaderNodeTexImage", "ShaderNodeEmission", "ShaderNodeBsdfTransparent", "ShaderNodeMixShader"} <= node_types
+    assert material.surface_render_method == "BLENDED"
+    texture_path = material.get("gbfr_albedo_dds") or material.get("gbfr_eye_conjunctiva_dds")
+    assert texture_path and Path(texture_path).suffix.casefold() == ".dds"
 from io_gbfr_blender_tools import gbfr_cloth_blender
 batches = []
 gbfr_cloth_blender._draw_armature(armatures[0], batches)

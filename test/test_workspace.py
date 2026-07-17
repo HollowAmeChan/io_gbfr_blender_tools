@@ -17,6 +17,7 @@ class WorkspaceTests(unittest.TestCase):
                 "mot": "source/data/pl/pl9999/pl9999_0001.mot",
                 "skeleton": "unpack/data/model/pl/pl9999/pl9999.skeleton",
                 "mmesh": "unpack/data/model_streaming/lod0/pl9999.mmesh",
+                "material": "unpack/data/model/pl/pl9999/vars/0.mmat.json",
                 "clp": "unpack/data/pl/pl9999/cloth/pl9999_0_0_clp.bxm.xml",
                 "clh": "unpack/data/pl/pl9999/cloth/pl9999_0_1_clh.bxm.xml",
             }
@@ -40,6 +41,7 @@ class WorkspaceTests(unittest.TestCase):
             workspace_path.write_text(json.dumps(workspace), encoding="utf-8")
             bundle = resolve_model_bundle(root / paths["source_minfo"])
             self.assertEqual(root / paths["mmesh"], bundle.mmesh)
+            self.assertEqual(root / paths["material"], bundle.material_json)
             self.assertEqual(root / paths["sop"], bundle.sop)
             self.assertEqual((root / paths["mot"],), bundle.animations)
             self.assertEqual([("clh", 1), ("clp", 0)], [(item.category, item.group_id) for item in bundle.cloth_files])

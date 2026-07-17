@@ -29,6 +29,7 @@ class ModelBundle:
     minfo: Path
     skeleton: Path
     mmesh: Path
+    material_json: Path | None
     sop: Path | None
     sop_report: dict | None
     animations: tuple[Path, ...]
@@ -120,6 +121,9 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
     mmesh = _existing_asset_path(root, _find_model_record(records, "mmesh", model_id))
     character_id = str(document.get("CharacterId") or model_id)
 
+    material_candidate = root / "unpack" / "data" / "model" / model_id[:2] / model_id / "vars" / "0.mmat.json"
+    material_json = material_candidate.resolve() if material_candidate.is_file() else None
+
     sop_report = next(
         (record for record in document.get("SkeletonConstraints") or []
          if str(record.get("ModelId", "")).casefold() == model_id.casefold()),
@@ -167,6 +171,7 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         minfo=minfo,
         skeleton=skeleton,
         mmesh=mmesh,
+        material_json=material_json,
         sop=sop,
         sop_report=sop_report,
         animations=animations,

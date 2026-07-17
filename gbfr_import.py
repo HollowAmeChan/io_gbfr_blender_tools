@@ -315,6 +315,9 @@ def read_some_data(context, filepath, import_scale):
 			
 			mat_counter += 1
 
+	from .gbfr_material_blender import apply_workspace_materials
+	apply_workspace_materials(obj, bundle)
+
 	
 	if armature is not None:
 		ArmMod = obj.modifiers.new("Armature","ARMATURE")

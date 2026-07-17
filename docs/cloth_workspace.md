@@ -41,3 +41,11 @@ blender --background --python test/blender_smoke.py
 - 采样结果由帧回调直接写入 PoseBone `matrix_basis`，随后交给 Blender 依赖图计算已导入的 SOP 近似约束。
 - 不为整批身体动作或表情切片创建 Action、Animation Slot、NLA Track 或关键帧数据。
 - “停止并恢复静止姿态”会清除当前内存剪辑并把骨架恢复到导入 rest pose；MOT 只用于预览，不参与模型或 cloth 导出。
+
+## 工作区材质
+
+导入 `.minfo` 时，插件会读取该模型 `unpack/data/model/.../vars/0.mmat.json` 的 `Entries1`，按网格材质槽保存的 `MaterialID` 关联材质。这里只导入 `0.mmat` 基础配色，不读取 `1.mmat` 及之后的换色材质，也会忽略名称中带 `_c01_`、`_c02_` 等标记的贴图。
+
+基础色 DDS 按以下顺序查找：`unpack/data/granite/2k`、`unpack/data/texture/2k`、`unpack/data/granite/4k`、`unpack/data/texture/4k`。文件名同时支持 `<name>.dds` 和旧 WTB 解码生成的 `<name>_0.dds`。Blender 4.5 可以直接读取这些 DDS，不需要预先转换格式。
+
+当前材质是面向制作预览的简化无光照材质：DDS 颜色连接到 Emission，Transparent BSDF 与 Emission 通过 Mix Shader 混合，DDS alpha 作为混合因子，材质表面模式设为 Alpha Blend。没有普通 albedo 的眼球槽会按各自 alpha 依次合成结膜、虹膜和高光 DDS，再连接到同一个 Emission 输出。它不会复现游戏中的 PBR、MSK 通道、法线、描边或颜色参数。导入结果和缺图数量记录在网格对象的 `gbfr_material_applied`、`gbfr_material_missing` 属性中；每个材质还会记录所用 `0.mmat.json` 和 DDS 路径，便于定位资源。
