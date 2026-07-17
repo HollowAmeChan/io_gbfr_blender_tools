@@ -14,6 +14,7 @@ class WorkspaceTests(unittest.TestCase):
                 "minfo": "unpack/data/model/pl/pl9999/pl9999.minfo",
                 "source_minfo": "source/data/model/pl/pl9999/pl9999.minfo",
                 "sop": "source/data/model/pl/pl9999/pl9999.sop",
+                "mot": "source/data/pl/pl9999/pl9999_0001.mot",
                 "skeleton": "unpack/data/model/pl/pl9999/pl9999.skeleton",
                 "mmesh": "unpack/data/model_streaming/lod0/pl9999.mmesh",
                 "clp": "unpack/data/pl/pl9999/cloth/pl9999_0_0_clp.bxm.xml",
@@ -40,6 +41,7 @@ class WorkspaceTests(unittest.TestCase):
             bundle = resolve_model_bundle(root / paths["source_minfo"])
             self.assertEqual(root / paths["mmesh"], bundle.mmesh)
             self.assertEqual(root / paths["sop"], bundle.sop)
+            self.assertEqual((root / paths["mot"],), bundle.animations)
             self.assertEqual([("clh", 1), ("clp", 0)], [(item.category, item.group_id) for item in bundle.cloth_files])
             self.assertEqual(workspace_path, find_workspace_json(root / paths["minfo"]))
 

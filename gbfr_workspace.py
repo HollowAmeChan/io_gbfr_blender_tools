@@ -31,6 +31,7 @@ class ModelBundle:
     mmesh: Path
     sop: Path | None
     sop_report: dict | None
+    animations: tuple[Path, ...]
     cloth_files: tuple[ClothFileRecord, ...]
     data_tools: Path | None
 
@@ -132,6 +133,12 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         if value:
             sop_candidates.append(_asset_path(root, value).with_suffix(".sop"))
     sop = next((path.resolve() for path in sop_candidates if path.is_file()), None)
+    source_root = _asset_path(root, str(document.get("SourceRoot") or "source"))
+    animation_root = source_root / "data" / model_id[:2] / model_id
+    animations = tuple(sorted(
+        (path.resolve() for path in animation_root.glob("*.mot") if path.is_file()),
+        key=lambda path: path.name.casefold(),
+    )) if animation_root.is_dir() else ()
 
     cloth_files = []
     for record in document.get("ClothFiles") or []:
@@ -162,6 +169,7 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         mmesh=mmesh,
         sop=sop,
         sop_report=sop_report,
+        animations=animations,
         cloth_files=tuple(cloth_files),
         data_tools=_find_data_tools(root),
     )

@@ -41,8 +41,39 @@ rest_error = max(
     for bone in armatures[0].data.bones for row in range(4) for column in range(4)
 )
 assert rest_error < 1e-4, rest_error
+from io_gbfr_blender_tools import gbfr_animation_blender
+animation = armatures[0].gbfr_animation
+assert animation.enabled
+assert len(animation.animations) == 524
+animation.suspend_updates = True
+animation.active_animation_index = 1
+animation.suspend_updates = False
+gbfr_animation_blender.load_selected_animation(armatures[0], bpy.context.scene)
+assert animation.preview_active
+assert armatures[0].animation_data is None or armatures[0].animation_data.action is None
+assert armatures[0].animation_data is None or len(armatures[0].animation_data.nla_tracks) == 0
+bpy.context.scene.frame_set(10)
+motion_delta = max(
+    abs(pose_bone.matrix_basis[row][column] - (1.0 if row == column else 0.0))
+    for pose_bone in armatures[0].pose.bones for row in range(4) for column in range(4)
+)
+assert motion_delta > 1e-5, motion_delta
+runtime = gbfr_animation_blender._ACTIVE_CLIPS[animation.cache_key]
+local_error = None
+for bone_id, tracks in runtime["tracks"].items():
+    pose_bone = armatures[0].pose.bones[runtime["mapping"][bone_id]]
+    if pose_bone.parent is None or pose_bone.constraints:
+        continue
+    expected = gbfr_animation_blender._sample_local_matrix(runtime["rest"][bone_id], tracks, 10.0)
+    actual = pose_bone.parent.matrix.inverted_safe() @ pose_bone.matrix
+    local_error = max(abs(actual[row][column] - expected[row][column]) for row in range(4) for column in range(4))
+    break
+assert local_error is not None and local_error < 1e-4, local_error
+gbfr_animation_blender._stop_preview(armatures[0])
 print(
     f"GBFR workspace import smoke passed: {len(state.clp_groups)} CLP / {len(state.clh_layers)} CLH / "
     f"{len(sop.operations)} SOP records / {sop.preview_operation_count} guarded operations / "
-    f"{len(constraints)} approximate constraints / {sop.guarded_count} guard rejects / rest error {rest_error:.2g}"
+    f"{len(constraints)} approximate constraints / {sop.guarded_count} guard rejects / "
+    f"{len(animation.animations)} indexed MOT / motion delta {motion_delta:.3g} / "
+    f"local error {local_error:.2g} / rest error {rest_error:.2g}"
 )

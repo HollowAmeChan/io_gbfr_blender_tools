@@ -32,3 +32,12 @@ blender --background --python test/blender_smoke.py
 - Blender 的分轴 Copy Rotation 不能严格等价于游戏的四元数 swing/twist 公式，因此这里只用于建模和动作检查，不应被视为游戏运行结果的完整复现。
 - 自检失败的核心变体不会执行；未完全探明的 corrective 操作只显示 source、target、类型、状态和原始属性，不会生成错误约束。
 - SOP 当前是**单向导入**。模型、CLP/CLH 导出都不会修改或生成 `.sop`，N 面板也不提供 SOP 写回按钮。
+
+## MOT 动画预览
+
+身体和面部模型导入后，`GBFR > MOT 动画预览` 会索引工作区 `source/data/pl/...` 或 `source/data/fp/...` 中的同模型 MOT。列表按文件名排序，点击条目才完整解析当前剪辑；切换条目会替换内存中的当前剪辑。
+
+- 预览器支持 MOT 压缩类型 `0-8`、常量/线性/Hermite 曲线和 60 FPS 时间轴。
+- 采样结果由帧回调直接写入 PoseBone `matrix_basis`，随后交给 Blender 依赖图计算已导入的 SOP 近似约束。
+- 不为整批身体动作或表情切片创建 Action、Animation Slot、NLA Track 或关键帧数据。
+- “停止并恢复静止姿态”会清除当前内存剪辑并把骨架恢复到导入 rest pose；MOT 只用于预览，不参与模型或 cloth 导出。

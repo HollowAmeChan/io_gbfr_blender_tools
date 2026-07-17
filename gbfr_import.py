@@ -81,6 +81,8 @@ def parse_skeleton(filepath, CurCollection):
 			except ValueError:
 				ebone["gbfr_bone_id"] = -1
 			ebone["gbfr_rest_quaternion"] = list(SkelTable[x]["Rot"])
+			ebone["gbfr_rest_position"] = list(SkelTable[x]["Pos"])
+			ebone["gbfr_rest_scale"] = list(SkelTable[x]["Scale"])
 			pbone.rotation_mode = 'QUATERNION'
 			pbone.rotation_quaternion = SkelTable[x]["Rot"]
 			pbone.location = SkelTable[x]["Pos"]
@@ -342,6 +344,8 @@ def read_some_data(context, filepath, import_scale):
 		populate_cloth_state(armature, bundle)
 		from .gbfr_sop_blender import populate_sop_state
 		populate_sop_state(armature, bundle)
+		from .gbfr_animation_blender import populate_animation_state
+		populate_animation_state(armature, bundle)
 
 	return {'FINISHED'}
 
