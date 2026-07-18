@@ -18,12 +18,103 @@ from mathutils import Vector
 
 from .gbfr_cloth_format import (
     CLP_HEADER_FLOATS, CLP_HEADER_INTS, ClhCollision, ClhDocument,
-    ClpDocument, ClpNode, load_clh, load_clp, write_clh, write_clp,
+    ClpDocument, ClpNode, MISSING_BONE, load_clh, load_clp, write_clh, write_clp,
 )
 from .gbfr_workspace import ModelBundle, WorkspaceError, resolve_model_bundle
+from .gbfr_cloth_metadata import CLP_HEADER_GROUPS, CLP_HEADER_UI
+from .utils import bone_names_mapping
 
 
 _DRAW_HANDLE = None
+
+def _bone_id(bone) -> int | None:
+    value = bone.get("gbfr_bone_id")
+    if value is not None:
+        return int(value)
+    if bone.name.startswith("_"):
+        try:
+            return int(bone.name[1:], 16)
+        except ValueError:
+            pass
+    return None
+
+
+def _bone_map(armature):
+    return {
+        bone_id: bone.name
+        for bone in armature.data.bones
+        if (bone_id := _bone_id(bone)) is not None
+    }
+
+
+def _bone_display(armature, bone_id: int) -> str:
+    if int(bone_id) in {-1, MISSING_BONE}:
+        return "无"
+    raw_name = f"_{int(bone_id):03x}"
+    aliases = bone_names_mapping.get(raw_name)
+    if aliases:
+        return f"{aliases[0]} ({raw_name})"
+    actual_name = _bone_map(armature).get(int(bone_id)) if armature else None
+    if actual_name and actual_name != raw_name:
+        return f"{actual_name} ({raw_name})"
+    return actual_name or raw_name
+
+
+def _property_armature(owner):
+    value = getattr(owner, "id_data", None)
+    return value if isinstance(value, bpy.types.Object) and value.type == "ARMATURE" else None
+
+
+def _bone_reference_update(raw_attr: str, missing_value: int | None = MISSING_BONE):
+    reference_attr = raw_attr + "_ref"
+
+    def update(owner, _context):
+        if getattr(owner, "suspend_reference_updates", False):
+            return
+        armature = _property_armature(owner)
+        name = getattr(owner, reference_attr, "")
+        if not name:
+            if missing_value is not None:
+                setattr(owner, raw_attr, missing_value)
+            _tag_redraw()
+            return
+        bone = armature.data.bones.get(name) if armature else None
+        bone_id = _bone_id(bone) if bone else None
+        if bone_id is not None:
+            setattr(owner, raw_attr, bone_id)
+            if raw_attr in {"p1", "p2"} and armature and hasattr(armature, "gbfr_cloth"):
+                for layer in armature.gbfr_cloth.clh_layers:
+                    _refresh_collision_references(layer, armature)
+        _tag_redraw()
+
+    return update
+
+
+def _collision_reference_update(owner, _context):
+    if owner.suspend_reference_updates:
+        return
+    if not owner.capsule_ref:
+        owner.capsule = -1
+        _tag_redraw()
+        return
+    armature = _property_armature(owner)
+    if armature:
+        for layer in armature.gbfr_cloth.clh_layers:
+            target = layer.collisions.get(owner.capsule_ref)
+            if target is not None:
+                owner.capsule = target.collision_id
+                break
+    _tag_redraw()
+
+
+def _collision_identity_update(owner, _context):
+    if owner.suspend_reference_updates:
+        return
+    armature = _property_armature(owner)
+    if armature and hasattr(armature, "gbfr_cloth"):
+        for layer in armature.gbfr_cloth.clh_layers:
+            _refresh_collision_references(layer, armature)
+    _tag_redraw()
 
 
 def _tag_redraw(_self=None, _context=None):
@@ -38,24 +129,32 @@ def _header_attr(xml_name: str) -> str:
 
 
 class GBFRClpNodeProperties(PropertyGroup):
-    data_version: IntProperty(name="dataVersion", default=2)
-    bone: IntProperty(name="骨骼 ID", default=0, min=0, max=65535)
-    up: IntProperty(name="上游", default=4095, min=-1, max=65535)
-    down: IntProperty(name="下游", default=4095, min=-1, max=65535)
-    side: IntProperty(name="横向", default=4095, min=-1, max=65535)
-    poly: IntProperty(name="多边形", default=4095, min=-1, max=65535)
-    fix: IntProperty(name="固定引用", default=4095, min=-1, max=65535)
-    rotation_limit: FloatProperty(name="旋转限制", subtype="ANGLE")
-    friction: FloatProperty(name="摩擦", min=0.0, soft_max=1.0)
-    gravity_blend_rate: FloatProperty(name="重力混合", soft_min=0.0, soft_max=1.0)
-    offset: FloatVectorProperty(name="偏移", size=4, default=(0.0, 0.0, 0.0, 1.0))
-    original_rate: FloatProperty(name="原姿势率", soft_min=0.0, soft_max=1.0)
-    weight: FloatProperty(name="权重", default=1.0, min=0.0)
-    thickness: FloatProperty(name="厚度", min=0.0)
-    wind_area: FloatProperty(name="受风面积")
-    joint_scale: FloatProperty(name="关节缩放", default=1.0, min=0.0)
-    allow_change_scale: BoolProperty(name="允许缩放")
-    axis_adjust_rate: FloatProperty(name="轴调整率", default=1.0)
+    suspend_reference_updates: BoolProperty(default=False, options={"HIDDEN"})
+    data_version: IntProperty(name="数据版本", default=2, description="节点结构版本；通常不需要修改")
+    bone: IntProperty(name="节点骨骼原始 ID", default=0, min=0, max=65535)
+    bone_ref: StringProperty(name="节点骨骼", description="该拓扑节点附着的骨骼；节点身份不可直接更改")
+    up: IntProperty(name="上游原始 ID", default=MISSING_BONE, min=-1, max=65535)
+    up_ref: StringProperty(name="上游骨骼", description="同一布料链的上一个骨骼；留空表示无连接", update=_bone_reference_update("up"))
+    down: IntProperty(name="下游原始 ID", default=MISSING_BONE, min=-1, max=65535)
+    down_ref: StringProperty(name="下游骨骼", description="同一布料链的下一个骨骼；留空表示无连接", update=_bone_reference_update("down"))
+    side: IntProperty(name="横向原始 ID", default=MISSING_BONE, min=-1, max=65535)
+    side_ref: StringProperty(name="横向骨骼", description="相邻布料链的横向结构连接；留空表示无连接", update=_bone_reference_update("side"))
+    poly: IntProperty(name="多边形原始 ID", default=MISSING_BONE, min=-1, max=65535)
+    poly_ref: StringProperty(name="多边形骨骼", description="布料面或剪切关系引用；精确公式尚未完全确认", update=_bone_reference_update("poly"))
+    fix: IntProperty(name="固定引用原始 ID", default=MISSING_BONE, min=-1, max=65535)
+    fix_ref: StringProperty(name="固定目标骨骼", description="该节点使用的固定骨骼引用；留空表示无", update=_bone_reference_update("fix"))
+    rotation_limit: FloatProperty(name="摆角限制", subtype="ANGLE", description="节点相对父链的旋转限制，XML 中按弧度保存")
+    friction: FloatProperty(name="摩擦", min=0.0, soft_max=1.0, description="节点碰撞摩擦参数")
+    gravity_blend_rate: FloatProperty(name="重力混合", soft_min=0.0, soft_max=1.0, description="节点重力混合率；精确公式尚未完全确认")
+    offset: FloatVectorProperty(name="局部偏移", size=4, default=(0.0, 0.0, 0.0, 1.0), description="游戏保存的节点 vec4 偏移")
+    original_rate: FloatProperty(name="原姿势保持率", soft_min=0.0, soft_max=1.0, description="向原始姿势恢复的节点级比例")
+    weight: FloatProperty(name="求解权重", default=1.0, min=0.0, description="求解权重，不应直接理解为公斤质量")
+    thickness: FloatProperty(name="碰撞厚度", min=0.0, description="节点参与碰撞时的厚度")
+    wind_area: FloatProperty(name="受风面积", description="节点接受风力的有效面积")
+    joint_scale: FloatProperty(name="关节缩放", default=1.0, min=0.0, description="节点关节尺度；精确公式尚未完全确认")
+    allow_change_scale: BoolProperty(name="允许动态缩放", description="允许运行时修改该节点尺度")
+    axis_adjust_rate: FloatProperty(name="轴修正率", default=1.0, description="节点轴向修正比例；精确公式尚未完全确认")
+    show_raw_values: BoolProperty(name="显示原始字段", default=False)
 
 
 class GBFRClpGroupProperties(PropertyGroup):
@@ -64,30 +163,38 @@ class GBFRClpGroupProperties(PropertyGroup):
     group_id: IntProperty(name="组 ID", default=-1)
     nodes: CollectionProperty(type=GBFRClpNodeProperties)
     active_node_index: IntProperty(default=0, update=_tag_redraw)
-    gravity_vector: FloatVectorProperty(name="gravityVec_", size=4, default=(0.0, -0.001, 0.0, 1.0))
+    gravity_vector: FloatVectorProperty(name="重力向量", size=4, default=(0.0, -0.001, 0.0, 1.0), description="该求解组使用的游戏原始 vec4 重力向量")
+    show_advanced_header: BoolProperty(name="显示高级与原始字段", default=False)
 
 
 for _name in CLP_HEADER_FLOATS:
-    GBFRClpGroupProperties.__annotations__[_header_attr(_name)] = FloatProperty(name=_name)
+    _label, _description = CLP_HEADER_UI[_name]
+    GBFRClpGroupProperties.__annotations__[_header_attr(_name)] = FloatProperty(name=_label, description=_description)
 for _name in CLP_HEADER_INTS:
-    if _name.startswith("b"):
-        GBFRClpGroupProperties.__annotations__[_header_attr(_name)] = BoolProperty(name=_name)
+    _label, _description = CLP_HEADER_UI[_name]
+    if _name.startswith("b") or _name == "localGravityBlendFlg_":
+        GBFRClpGroupProperties.__annotations__[_header_attr(_name)] = BoolProperty(name=_label, description=_description)
     else:
-        GBFRClpGroupProperties.__annotations__[_header_attr(_name)] = IntProperty(name=_name)
+        GBFRClpGroupProperties.__annotations__[_header_attr(_name)] = IntProperty(name=_label, description=_description)
 
 
 class GBFRClhCollisionProperties(PropertyGroup):
-    data_version: IntProperty(name="dataVersion", default=1)
-    collision_id: IntProperty(name="ID", min=0, max=65535)
-    p1: IntProperty(name="骨骼 P1", min=0, max=65535, update=_tag_redraw)
-    p2: IntProperty(name="骨骼 P2", min=0, max=65535, update=_tag_redraw)
-    weight: FloatProperty(name="骨骼混合权重", soft_min=0.0, soft_max=1.0, update=_tag_redraw)
-    radius: FloatProperty(name="半径", min=0.0, update=_tag_redraw)
-    offset1: FloatVectorProperty(name="P1 局部偏移", size=4, update=_tag_redraw)
-    offset2: FloatVectorProperty(name="P2 局部偏移", size=4, update=_tag_redraw)
-    capsule: IntProperty(name="胶囊连接 ID", default=-1, min=-1, max=65535, update=_tag_redraw)
-    disabled_in_battle: BoolProperty(name="战斗中禁用")
-    disabled_in_idle: BoolProperty(name="待机中禁用")
+    suspend_reference_updates: BoolProperty(default=False, options={"HIDDEN"})
+    data_version: IntProperty(name="数据版本", default=1, description="碰撞记录结构版本")
+    collision_id: IntProperty(name="碰撞 ID", min=0, max=65535, description="当前 CLH 层内的端点编号", update=_collision_identity_update)
+    p1: IntProperty(name="P1 原始骨骼 ID", min=0, max=65535, update=_tag_redraw)
+    p1_ref: StringProperty(name="P1 附着骨骼", description="第一个骨骼空间；位置使用 P1 局部偏移", update=_bone_reference_update("p1", None))
+    p2: IntProperty(name="P2 原始骨骼 ID", min=0, max=65535, update=_tag_redraw)
+    p2_ref: StringProperty(name="P2 附着骨骼", description="第二个骨骼空间；位置使用 P2 局部偏移", update=_bone_reference_update("p2", None))
+    weight: FloatProperty(name="P2 混合权重", soft_min=0.0, soft_max=1.0, update=_tag_redraw, description="在 P1 与 P2 变换后的位置之间插值；不是质量")
+    radius: FloatProperty(name="碰撞半径", min=0.0, update=_tag_redraw, description="球端点半径；连接另一端点时共同形成胶囊")
+    offset1: FloatVectorProperty(name="P1 局部偏移", size=4, update=_tag_redraw, description="P1 骨骼局部空间中的 vec4 位置")
+    offset2: FloatVectorProperty(name="P2 局部偏移", size=4, update=_tag_redraw, description="P2 骨骼局部空间中的 vec4 位置")
+    capsule: IntProperty(name="胶囊另一端原始 ID", default=-1, min=-1, max=65535, update=_tag_redraw)
+    capsule_ref: StringProperty(name="胶囊另一端", description="引用同层另一碰撞端点；留空时当前记录为球", update=_collision_reference_update)
+    disabled_in_battle: BoolProperty(name="战斗状态禁用", description="游戏处于战斗状态时不使用此碰撞")
+    disabled_in_idle: BoolProperty(name="待机状态禁用", description="游戏处于待机状态时不使用此碰撞")
+    show_raw_values: BoolProperty(name="显示原始字段", default=False)
 
 
 class GBFRClhLayerProperties(PropertyGroup):
@@ -125,7 +232,8 @@ class GBFRClothStateProperties(PropertyGroup):
     last_status: StringProperty(name="状态")
 
 
-def _copy_node(target, source: ClpNode) -> None:
+def _copy_node(target, source: ClpNode, bone_mapping: dict[int, str]) -> None:
+    target.suspend_reference_updates = True
     for name in (
         "data_version", "bone", "up", "down", "side", "poly", "fix",
         "rotation_limit", "friction", "gravity_blend_rate", "offset",
@@ -133,14 +241,44 @@ def _copy_node(target, source: ClpNode) -> None:
         "allow_change_scale", "axis_adjust_rate",
     ):
         setattr(target, name, getattr(source, name))
+    _sync_node_references(target, bone_mapping)
+    target.suspend_reference_updates = False
 
 
-def _copy_collision(target, source: ClhCollision) -> None:
+def _copy_collision(target, source: ClhCollision, bone_mapping: dict[int, str]) -> None:
+    target.suspend_reference_updates = True
     for name in (
         "data_version", "collision_id", "p1", "p2", "weight", "radius",
         "offset1", "offset2", "capsule", "disabled_in_battle", "disabled_in_idle",
     ):
         setattr(target, name, getattr(source, name))
+    _sync_collision_bones(target, bone_mapping)
+    target.suspend_reference_updates = False
+
+
+def _sync_node_references(target, bone_mapping: dict[int, str]) -> None:
+    for name in ("bone", "up", "down", "side", "poly", "fix"):
+        value = int(getattr(target, name))
+        setattr(target, name + "_ref", bone_mapping.get(value, "") if value != MISSING_BONE else "")
+
+
+def _sync_collision_bones(target, bone_mapping: dict[int, str]) -> None:
+    target.p1_ref = bone_mapping.get(int(target.p1), "")
+    target.p2_ref = bone_mapping.get(int(target.p2), "")
+
+
+def _refresh_collision_references(layer, armature) -> None:
+    by_id = {value.collision_id: value for value in layer.collisions}
+    for value in layer.collisions:
+        value.name = (
+            f"#{value.collision_id} · {_bone_display(armature, value.p1)}"
+            f" → {_bone_display(armature, value.p2)}"
+        )
+    for value in layer.collisions:
+        value.suspend_reference_updates = True
+        target = by_id.get(value.capsule)
+        value.capsule_ref = target.name if target is not None else ""
+        value.suspend_reference_updates = False
 
 
 def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> None:
@@ -157,6 +295,7 @@ def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> Non
     if addon is not None:
         preference_path = str(getattr(addon.preferences, "gbfr_data_tools_path", "") or "")
     state.data_tools_path = preference_path if Path(preference_path).is_file() else str(bundle.data_tools or "")
+    bone_mapping = _bone_map(armature)
     for record in bundle.cloth_files:
         if record.category == "clp":
             document = load_clp(record.xml)
@@ -169,7 +308,7 @@ def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> Non
                 setattr(group, _header_attr(name), document.header.get(name, 0))
             group.gravity_vector = document.header.get("gravityVec_", (0.0, -0.001, 0.0, 1.0))
             for value in document.nodes:
-                _copy_node(group.nodes.add(), value)
+                _copy_node(group.nodes.add(), value, bone_mapping)
         elif record.category == "clh":
             document = load_clh(record.xml)
             layer = state.clh_layers.add()
@@ -178,7 +317,8 @@ def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> Non
             layer.output_path = str(record.output)
             layer.group_id = record.group_id
             for value in document.collisions:
-                _copy_collision(layer.collisions.add(), value)
+                _copy_collision(layer.collisions.add(), value, bone_mapping)
+            _refresh_collision_references(layer, armature)
     state.active_clp_index = min(state.active_clp_index, max(0, len(state.clp_groups) - 1))
     state.active_clh_index = min(state.active_clh_index, max(0, len(state.clh_layers) - 1))
     state.enabled = True
@@ -292,6 +432,50 @@ class GBFR_OT_ClothExport(Operator):
         return {"FINISHED"}
 
 
+class GBFR_OT_SelectBoneReference(Operator):
+    bl_idname = "gbfr.select_bone_reference"
+    bl_label = "选中引用骨骼"
+    bl_description = "在当前骨架中选中此引用指向的骨骼"
+    bl_options = {"UNDO"}
+
+    bone_name: StringProperty()
+
+    def execute(self, context):
+        armature = _armature(context)
+        bone = armature.data.bones.get(self.bone_name) if armature else None
+        if bone is None:
+            self.report({"WARNING"}, "引用骨骼不存在；请重新载入工作区")
+            return {"CANCELLED"}
+        bpy.context.view_layer.objects.active = armature
+        armature.select_set(True)
+        for item in armature.data.bones:
+            item.select = False
+        bone.hide = False
+        bone.select = True
+        armature.data.bones.active = bone
+        return {"FINISHED"}
+
+
+class GBFR_OT_ToggleCollisionLayer(Operator):
+    bl_idname = "gbfr.toggle_collision_layer"
+    bl_label = "切换碰撞层"
+    bl_description = "切换当前 CLP 求解组使用的 CLH 碰撞层"
+    bl_options = {"UNDO"}
+
+    layer_id: IntProperty(min=0, max=30)
+
+    def execute(self, context):
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        if not state or not state.clp_groups:
+            return {"CANCELLED"}
+        group = state.clp_groups[state.active_clp_index]
+        attr = _header_attr("useCollisionFlags_")
+        setattr(group, attr, int(getattr(group, attr)) ^ (1 << self.layer_id))
+        _tag_redraw()
+        return {"FINISHED"}
+
+
 class GBFR_OT_ClhAddCollision(Operator):
     bl_idname = "gbfr.clh_add_collision"
     bl_label = "添加碰撞端点"
@@ -305,6 +489,7 @@ class GBFR_OT_ClhAddCollision(Operator):
         layer = state.clh_layers[state.active_clh_index]
         value = layer.collisions.add()
         value.collision_id = max((item.collision_id for item in list(layer.collisions)[:-1]), default=-1) + 1
+        _refresh_collision_references(layer, armature)
         layer.active_collision_index = len(layer.collisions) - 1
         _tag_redraw()
         return {"FINISHED"}
@@ -324,9 +509,28 @@ class GBFR_OT_ClhRemoveCollision(Operator):
         if not layer.collisions:
             return {"CANCELLED"}
         layer.collisions.remove(layer.active_collision_index)
+        _refresh_collision_references(layer, armature)
         layer.active_collision_index = min(layer.active_collision_index, max(0, len(layer.collisions) - 1))
         _tag_redraw()
         return {"FINISHED"}
+
+
+def _draw_bone_reference(layout, owner, raw_attr: str, armature, label: str, editable=True) -> None:
+    reference_attr = raw_attr + "_ref"
+    row = layout.row(align=True)
+    field = row.row(align=True)
+    field.enabled = editable
+    field.prop_search(owner, reference_attr, armature.data, "bones", text=label, icon="BONE_DATA")
+    name = getattr(owner, reference_attr)
+    if name:
+        operator = row.operator("gbfr.select_bone_reference", text="", icon="RESTRICT_SELECT_OFF")
+        operator.bone_name = name
+    else:
+        raw_value = int(getattr(owner, raw_attr))
+        if raw_value not in {-1, MISSING_BONE}:
+            warning = row.row(align=True)
+            warning.alert = True
+            warning.label(text=f"未解析 _{raw_value:03x}", icon="ERROR")
 
 
 class GBFR_UL_ClpGroups(UIList):
@@ -335,8 +539,15 @@ class GBFR_UL_ClpGroups(UIList):
 
 
 class GBFR_UL_ClpNodes(UIList):
-    def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_propname, _index):
-        layout.label(text=f"_{item.bone:03x}  up:{item.up} down:{item.down}", icon="BONE_DATA")
+    def draw_item(self, context, layout, _data, item, _icon, _active_data, _active_propname, _index):
+        armature = _armature(context)
+        layout.label(
+            text=(
+                f"{_bone_display(armature, item.bone)}  "
+                f"上:{_bone_display(armature, item.up)}  下:{_bone_display(armature, item.down)}"
+            ),
+            icon="BONE_DATA",
+        )
 
 
 class GBFR_UL_ClhLayers(UIList):
@@ -345,9 +556,13 @@ class GBFR_UL_ClhLayers(UIList):
 
 
 class GBFR_UL_ClhCollisions(UIList):
-    def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_propname, _index):
-        shape = "球" if item.capsule < 0 else f"胶囊 <- {item.capsule}"
-        layout.label(text=f"{item.collision_id}: _{item.p1:03x}/_{item.p2:03x} {shape}")
+    def draw_item(self, context, layout, _data, item, _icon, _active_data, _active_propname, _index):
+        armature = _armature(context)
+        shape = "球" if item.capsule < 0 else f"胶囊连接 #{item.capsule}"
+        layout.label(
+            text=f"#{item.collision_id} · {_bone_display(armature, item.p1)} → {_bone_display(armature, item.p2)} · {shape}",
+            icon="MESH_UVSPHERE" if item.capsule < 0 else "META_CAPSULE",
+        )
 
 
 class GBFR_PT_ClothEditor(Panel):
@@ -393,20 +608,61 @@ class GBFR_PT_ClothEditor(Panel):
             op = row.operator("gbfr.cloth_export", text="写入当前 CLP", icon="EXPORT")
             op.kind = "CLP"
             header = layout.box()
-            header.label(text="Header")
+            header.label(text="求解组参数", icon="PHYSICS")
             header.prop(group, "gravity_vector")
-            grid = header.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
-            for name in CLP_HEADER_FLOATS + CLP_HEADER_INTS:
-                grid.prop(group, _header_attr(name), text=name)
+            for title, names in CLP_HEADER_GROUPS:
+                section = header.box()
+                section.label(text=title)
+                grid = section.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
+                for name in names:
+                    grid.prop(group, _header_attr(name))
+
+            collision_layers = header.box()
+            collision_layers.label(text="使用的碰撞层", icon="MESH_UVSPHERE")
+            mask = int(getattr(group, _header_attr("useCollisionFlags_")))
+            layer_grid = collision_layers.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
+            for layer in state.clh_layers:
+                if not 0 <= layer.group_id < 31:
+                    continue
+                operator = layer_grid.operator(
+                    "gbfr.toggle_collision_layer",
+                    text=f"层 {layer.group_id}: {layer.name}",
+                    icon="CHECKBOX_HLT" if mask & (1 << layer.group_id) else "CHECKBOX_DEHLT",
+                    depress=bool(mask & (1 << layer.group_id)),
+                )
+                operator.layer_id = layer.group_id
+
+            header.prop(group, "show_advanced_header", toggle=True)
+            if group.show_advanced_header:
+                raw = header.box()
+                raw.label(text="高级与原始字段", icon="SETTINGS")
+                raw_values = raw.column(align=True)
+                raw_values.enabled = False
+                for name in ("dataVersion_", "id_", "useCollisionFlags_"):
+                    raw_values.prop(group, _header_attr(name))
             layout.template_list("GBFR_UL_ClpNodes", "", group, "nodes", group, "active_node_index", rows=4)
             if group.nodes:
                 node = group.nodes[group.active_node_index]
                 node_box = layout.box()
-                node_box.label(text=f"骨骼 _{node.bone:03x} ({node.bone})")
-                for name in ("up", "down", "side", "poly", "fix"):
-                    node_box.prop(node, name)
+                node_box.label(text=f"节点 {_bone_display(armature, node.bone)}", icon="BONE_DATA")
+                _draw_bone_reference(node_box, node, "bone", armature, "节点骨骼", editable=False)
+                topology = node_box.box()
+                topology.label(text="拓扑引用", icon="LINKED")
+                for name, label in (("up", "上游骨骼"), ("down", "下游骨骼"), ("side", "横向骨骼"), ("poly", "多边形骨骼"), ("fix", "固定目标骨骼")):
+                    _draw_bone_reference(topology, node, name, armature, label)
+                physics = node_box.box()
+                physics.label(text="物理参数", icon="PHYSICS")
                 for name in ("rotation_limit", "friction", "gravity_blend_rate", "offset", "original_rate", "weight", "thickness", "wind_area", "joint_scale", "allow_change_scale", "axis_adjust_rate"):
-                    node_box.prop(node, name)
+                    physics.prop(node, name)
+                node_box.prop(node, "show_raw_values", toggle=True)
+                if node.show_raw_values:
+                    raw = node_box.box()
+                    raw.label(text="原始骨骼编码", icon="INFO")
+                    raw_values = raw.column(align=True)
+                    raw_values.enabled = False
+                    raw_values.prop(node, "data_version")
+                    for name in ("bone", "up", "down", "side", "poly", "fix"):
+                        raw_values.prop(node, name)
 
         layout.separator()
         layout.label(text="CLH 碰撞层")
@@ -422,23 +678,25 @@ class GBFR_PT_ClothEditor(Panel):
             if layer.collisions:
                 value = layer.collisions[layer.active_collision_index]
                 collision = layout.box()
-                collision.label(text=f"Collision ID {value.collision_id}")
-                for name in ("p1", "p2", "weight", "radius", "offset1", "offset2", "capsule", "disabled_in_battle", "disabled_in_idle"):
-                    collision.prop(value, name)
-
-
-def _bone_map(armature):
-    result = {}
-    for bone in armature.data.bones:
-        value = bone.get("gbfr_bone_id")
-        if value is None and bone.name.startswith("_"):
-            try:
-                value = int(bone.name[1:], 16)
-            except ValueError:
-                continue
-        if value is not None:
-            result[int(value)] = bone.name
-    return result
+                collision.label(text=f"碰撞端点 #{value.collision_id}", icon="MESH_UVSPHERE")
+                _draw_bone_reference(collision, value, "p1", armature, "P1 附着骨骼")
+                _draw_bone_reference(collision, value, "p2", armature, "P2 附着骨骼")
+                collision.prop(value, "weight")
+                collision.prop(value, "offset1")
+                collision.prop(value, "offset2")
+                collision.prop(value, "radius")
+                collision.prop_search(value, "capsule_ref", layer, "collisions", text="胶囊另一端", icon="META_CAPSULE")
+                row = collision.row(align=True)
+                row.prop(value, "disabled_in_battle")
+                row.prop(value, "disabled_in_idle")
+                collision.prop(value, "show_raw_values", toggle=True)
+                if value.show_raw_values:
+                    raw = collision.box()
+                    raw.label(text="原始字段", icon="INFO")
+                    raw_values = raw.column(align=True)
+                    raw_values.enabled = False
+                    for name in ("data_version", "collision_id", "p1", "p2", "capsule"):
+                        raw_values.prop(value, name)
 
 
 def _bone_point(armature, mapping, bone_id, offset=(0.0, 0.0, 0.0, 0.0)):
@@ -583,7 +841,8 @@ def _draw_overlay():
 classes = (
     GBFRClpNodeProperties, GBFRClpGroupProperties, GBFRClhCollisionProperties,
     GBFRClhLayerProperties, GBFRClothStateProperties, GBFR_OT_ClothReload,
-    GBFR_OT_ClothExport, GBFR_OT_ClhAddCollision, GBFR_OT_ClhRemoveCollision,
+    GBFR_OT_ClothExport, GBFR_OT_SelectBoneReference,
+    GBFR_OT_ToggleCollisionLayer, GBFR_OT_ClhAddCollision, GBFR_OT_ClhRemoveCollision,
     GBFR_UL_ClpGroups, GBFR_UL_ClpNodes, GBFR_UL_ClhLayers,
     GBFR_UL_ClhCollisions, GBFR_PT_ClothEditor,
 )

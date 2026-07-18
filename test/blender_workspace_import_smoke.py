@@ -23,6 +23,61 @@ assert len(state.clp_groups) > 0
 assert len(state.clh_layers) > 0
 assert Path(state.workspace_path).name == "workspace.json"
 assert any("gbfr_bone_id" in bone for bone in armatures[0].data.bones)
+bone_by_id = {int(bone["gbfr_bone_id"]): bone.name for bone in armatures[0].data.bones}
+for group in state.clp_groups:
+    for node in group.nodes:
+        assert node.bone_ref == bone_by_id[node.bone]
+        for raw_attr in ("up", "down", "side", "poly", "fix"):
+            raw_value = getattr(node, raw_attr)
+            reference = getattr(node, raw_attr + "_ref")
+            assert reference == ("" if raw_value == 4095 else bone_by_id[raw_value])
+for layer in state.clh_layers:
+    by_collision_id = {value.collision_id: value for value in layer.collisions}
+    for value in layer.collisions:
+        assert value.p1_ref == bone_by_id[value.p1]
+        assert value.p2_ref == bone_by_id[value.p2]
+        target = by_collision_id.get(value.capsule)
+        assert value.capsule_ref == (target.name if target else "")
+
+editable_node = next(node for group in state.clp_groups for node in group.nodes if node.down != 4095)
+old_down, old_down_ref = editable_node.down, editable_node.down_ref
+editable_node.down_ref = editable_node.bone_ref
+assert editable_node.down == editable_node.bone
+editable_node.suspend_reference_updates = True
+editable_node.down = old_down
+editable_node.down_ref = old_down_ref
+editable_node.suspend_reference_updates = False
+
+editable_collision = next(value for layer in state.clh_layers for value in layer.collisions)
+old_p1, old_p1_ref = editable_collision.p1, editable_collision.p1_ref
+editable_collision.p1_ref = editable_collision.p2_ref
+assert editable_collision.p1 == editable_collision.p2
+editable_collision.p1_ref = old_p1_ref
+assert editable_collision.p1 == old_p1
+
+capsule_layer = next(layer for layer in state.clh_layers if len(layer.collisions) > 1)
+capsule_value = capsule_layer.collisions[0]
+capsule_target = capsule_layer.collisions[1]
+old_capsule, old_capsule_ref = capsule_value.capsule, capsule_value.capsule_ref
+capsule_value.capsule_ref = capsule_target.name
+assert capsule_value.capsule == capsule_target.collision_id
+capsule_value.suspend_reference_updates = True
+capsule_value.capsule = old_capsule
+capsule_value.capsule_ref = old_capsule_ref
+capsule_value.suspend_reference_updates = False
+
+bpy.context.view_layer.objects.active = armatures[0]
+bpy.ops.gbfr.select_bone_reference(bone_name=editable_node.bone_ref)
+assert armatures[0].data.bones.active.name == editable_node.bone_ref
+layer_id = next(layer.group_id for layer in state.clh_layers if 0 <= layer.group_id < 31)
+mask_attr = "header_useCollisionFlags"
+old_mask = getattr(state.clp_groups[state.active_clp_index], mask_attr)
+bpy.ops.gbfr.toggle_collision_layer(layer_id=layer_id)
+assert getattr(state.clp_groups[state.active_clp_index], mask_attr) == old_mask ^ (1 << layer_id)
+bpy.ops.gbfr.toggle_collision_layer(layer_id=layer_id)
+assert getattr(state.clp_groups[state.active_clp_index], mask_attr) == old_mask
+from io_gbfr_blender_tools.gbfr_cloth_blender import GBFRClpGroupProperties
+assert GBFRClpGroupProperties.bl_rna.properties["header_airResistance"].name == "空气阻力"
 meshes = [
     obj for obj in bpy.context.scene.objects
     if obj.type == "MESH" and "gbfr_material_json" in obj

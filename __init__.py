@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Granblue Fantasy Relink Blender Tools",
     "author": "WistfulHopes & AlphaSatanOmega",
-    "version": (1, 5, 0),
+    "version": (1, 6, 0),
     "blender": (4, 0, 0),
     "location": "File > Import/Export | View 3D > Tool Shelf > GBFR",
     "description": "Workspace-aware model and CLP/CLH editing tools for Granblue Fantasy Relink",
@@ -26,6 +26,8 @@ if "bpy" in locals():
         importlib.reload(gbfr_workspace)
     if "gbfr_cloth_format" in locals():
         importlib.reload(gbfr_cloth_format)
+    if "gbfr_cloth_metadata" in locals():
+        importlib.reload(gbfr_cloth_metadata)
     if "gbfr_cloth_blender" in locals():
         importlib.reload(gbfr_cloth_blender)
     if "gbfr_sop" in locals():
@@ -48,7 +50,7 @@ import struct
 import os
 from . import (
     gbfr_import, gbfr_export, gbfr_panel, utils,
-    gbfr_workspace, gbfr_cloth_format, gbfr_cloth_blender,
+    gbfr_workspace, gbfr_cloth_format, gbfr_cloth_metadata, gbfr_cloth_blender,
     gbfr_sop, gbfr_sop_blender,
     gbfr_animation, gbfr_animation_blender,
     gbfr_material, gbfr_material_blender,
