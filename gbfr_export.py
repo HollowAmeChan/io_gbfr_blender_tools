@@ -603,11 +603,12 @@ class ExportSomeData(Operator, ImportHelper):
 			box.alert = True
 			box.label(text=str(err), icon='ERROR')
 			return
+		box.label(text=f"工作区根目录: {targets.workspace_root}", icon='FILE_FOLDER')
 		box.label(text="将覆盖以下 unpack 文件", icon='EXPORT')
 		for target in (targets.minfo, targets.skeleton, targets.mmesh):
 			box.label(text=str(target.relative_to(targets.workspace_root)), icon='FILE')
 		box.separator()
-		box.label(text=str(targets.debug_json.relative_to(targets.workspace_root)), icon='TEXT')
+		box.label(text=f"调试信息: {targets.debug_json.relative_to(targets.workspace_root)}", icon='TEXT')
 		box.label(text="build 不会被写入", icon='INFO')
 
 	def execute(self, context):
