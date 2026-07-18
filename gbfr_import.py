@@ -4,6 +4,7 @@ import mathutils
 import struct
 import os
 import importlib
+from pathlib import Path
 from .Entities.ModelInfo import ModelInfo
 from .Entities.ModelSkeleton import ModelSkeleton
 from .utils import *
@@ -119,11 +120,12 @@ def parse_mesh_info(filepath):
 
 	
 def read_some_data(context, filepath, import_scale): 
+	source_minfo_path = str(Path(filepath).expanduser().resolve())
 	bundle = resolve_model_bundle(filepath)
 	filepath = str(bundle.minfo)
 	model_name = bundle.model_id
 
-	CurCollection = bpy.data.collections.new(f"GBFR Model Collection_{model_name}") # Create new collection
+	CurCollection = bpy.data.collections.new(f"GBFR | {model_name}") # Create a scoped minfo session collection
 	bpy.context.scene.collection.children.link(CurCollection)
 
 	utils_set_mode('OBJECT')
@@ -350,6 +352,9 @@ def read_some_data(context, filepath, import_scale):
 		from .gbfr_animation_blender import populate_animation_state
 		populate_animation_state(armature, bundle)
 
+		from .gbfr_session import configure_session
+		configure_session(CurCollection, bundle, source_minfo_path, armature, obj, context.scene)
+
 	return {'FINISHED'}
 
 
@@ -363,7 +368,8 @@ from bpy.types import Operator
 class ImportSomeData(Operator, ImportHelper):
 	"""Importer for Granblue Fantasy Relink models"""
 	bl_idname = "gbfr.import_mesh"  # important since its how bpy.ops.import_test.some_data is constructed
-	bl_label = "Import"
+	bl_label = "导入 minfo"
+	bl_description = "从 GBFR Modtools 工作区导入一个独立的 minfo 编辑会话"
 
 	# ImportHelper mix-in class uses this.
 	filename_ext = ".minfo"

@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Granblue Fantasy Relink Blender Tools",
     "author": "WistfulHopes & AlphaSatanOmega",
-    "version": (1, 6, 0),
+    "version": (2, 0, 0),
     "blender": (4, 0, 0),
     "location": "File > Import/Export | View 3D > Tool Shelf > GBFR",
     "description": "Workspace-aware model and CLP/CLH editing tools for Granblue Fantasy Relink",
@@ -24,6 +24,10 @@ if "bpy" in locals():
         importlib.reload(utils)
     if "gbfr_workspace" in locals():
         importlib.reload(gbfr_workspace)
+    if "gbfr_session" in locals():
+        importlib.reload(gbfr_session)
+    if "gbfr_workspace_ui" in locals():
+        importlib.reload(gbfr_workspace_ui)
     if "gbfr_cloth_format" in locals():
         importlib.reload(gbfr_cloth_format)
     if "gbfr_cloth_metadata" in locals():
@@ -50,7 +54,8 @@ import struct
 import os
 from . import (
     gbfr_import, gbfr_export, gbfr_panel, utils,
-    gbfr_workspace, gbfr_cloth_format, gbfr_cloth_metadata, gbfr_cloth_blender,
+    gbfr_workspace, gbfr_session, gbfr_workspace_ui,
+    gbfr_cloth_format, gbfr_cloth_metadata, gbfr_cloth_blender,
     gbfr_sop, gbfr_sop_blender,
     gbfr_animation, gbfr_animation_blender,
     gbfr_material, gbfr_material_blender,
@@ -90,6 +95,8 @@ class AddonPreferences(bpy.types.AddonPreferences):
 # Register importer & exporter
 def register():
     bpy.utils.register_class(AddonPreferences)
+    gbfr_session.register()
+    gbfr_workspace_ui.register()
     gbfr_import.register()
     gbfr_export.register()
     gbfr_panel.register()
@@ -104,6 +111,8 @@ def unregister():
     gbfr_import.unregister()
     gbfr_export.unregister()
     gbfr_panel.unregister()
+    gbfr_workspace_ui.unregister()
+    gbfr_session.unregister()
     bpy.utils.unregister_class(AddonPreferences)
 
 #Run the addon

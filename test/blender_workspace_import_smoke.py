@@ -17,6 +17,13 @@ result = bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0)
 assert result == {"FINISHED"}, result
 armatures = [obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"]
 assert len(armatures) == 1, len(armatures)
+from io_gbfr_blender_tools.gbfr_session import active_session_collection, session_collections
+sessions = session_collections(bpy.context.scene)
+assert len(sessions) == 1
+session = sessions[0]
+assert session.gbfr_session.source_minfo_path == str(minfo)
+assert session.gbfr_session.armature == armatures[0]
+assert active_session_collection(bpy.context) == session
 state = armatures[0].gbfr_cloth
 assert state.enabled
 assert len(state.clp_groups) > 0
