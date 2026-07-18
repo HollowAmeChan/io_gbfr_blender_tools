@@ -82,9 +82,9 @@ class GBFR_OT_RestoreSessionData(Operator):
         if collection is None or armature is None or mesh is None:
             return {"CANCELLED"}
         state = collection.gbfr_session
-        selected = Path(state.source_minfo_path)
+        selected = Path(state.resolved_minfo_path)
         if not selected.is_file():
-            selected = Path(state.resolved_minfo_path)
+            selected = Path(state.source_minfo_path)
         try:
             bundle = resolve_model_bundle(selected, state.workspace_path)
             from .gbfr_material_blender import apply_workspace_materials
@@ -122,7 +122,7 @@ class GBFR_OT_BuildSessionCloth(Operator):
 class GBFR_OT_ExportSessionModel(Operator):
     bl_idname = "gbfr.export_session_model"
     bl_label = "导出模型"
-    bl_description = "锁定当前 minfo 会话的 Armature 并打开 mmesh/minfo 导出器"
+    bl_description = "选择 workspace.json，将当前模型直接导出到该工作区的 unpack"
 
     def execute(self, context):
         collection = active_session_collection(context)
@@ -162,7 +162,7 @@ class GBFR_PT_Workspace(Panel):
 
         controls = layout.row(align=True)
         controls.operator("gbfr.restore_session_data", text="恢复", icon="FILE_REFRESH")
-        controls.operator("gbfr.export_session_model", text="导出模型", icon="EXPORT")
+        controls.operator("gbfr.export_session_model", text="导出到工作区", icon="EXPORT")
         build = controls.row(align=True)
         armature = active_session_armature(context)
         build.enabled = bool(armature and armature.gbfr_cloth.enabled)

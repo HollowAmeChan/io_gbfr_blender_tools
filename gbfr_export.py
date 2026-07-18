@@ -6,10 +6,13 @@ import os
 import json
 import random
 import importlib
+import shutil
+import tempfile
+from pathlib import Path
 from pprint import pprint
 # ExporterHelper is a helper class, defines filename and
 # invoke() function which calls the file selector.
-from bpy_extras.io_utils import ExportHelper
+from bpy_extras.io_utils import ImportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 from bpy.types import Operator
 # ----------------------------
@@ -20,9 +23,10 @@ from .Entities.BoneInfo import BoneInfo, CreateBoneInfo
 from .Entities.Vec3 import Vec3, CreateVec3
 from .Entities.Quaternion import Quaternion, CreateQuaternion
 from .Entities import MInfo_Converter
+from .gbfr_workspace import resolve_model_export_targets
 from .utils import *
 
-def write_some_data(context, filepath, export_scale):
+def write_some_data(context, filepath, export_scale, flatc_override=None):
 	#Init mmesh and json file variables
 	f = None ; j = None
 	# Init file paths
@@ -32,7 +36,7 @@ def write_some_data(context, filepath, export_scale):
 
 	try:
 		# Get the path to flatc specified by user
-		flatc_file_path = bpy.context.preferences.addons[__package__].preferences.flatc_file_path
+		flatc_file_path = flatc_override or bpy.context.preferences.addons[__package__].preferences.flatc_file_path
 		if os.path.exists(flatc_file_path) == False:
 			raise FileNotFoundError(format_exception("ERROR: Please put in the correct path to FlatBuffers/flatc.exe " + 
 			"in the preferences for the GBFR Exporter addon settings under: Preferences > Addons"))
@@ -531,33 +535,109 @@ def write_some_data(context, filepath, export_scale):
 		# return {'ERROR'}
 
 
-class ExportSomeData(Operator, ExportHelper):
+def _install_workspace_export(generated_directory, targets):
+	generated_directory = Path(generated_directory)
+	files = (
+		(generated_directory / f"{targets.model_id}.minfo", targets.minfo),
+		(generated_directory / f"{targets.model_id}.skeleton", targets.skeleton),
+		(generated_directory / f"{targets.model_id}.mmesh", targets.mmesh),
+		(generated_directory / f"{targets.model_id}.json", targets.debug_json),
+	)
+	missing = [str(source) for source, _ in files if not source.is_file()]
+	if missing:
+		raise FileNotFoundError("导出结果不完整: " + ", ".join(missing))
+	temporary_files = []
+	try:
+		for source, target in files:
+			target.parent.mkdir(parents=True, exist_ok=True)
+			temporary = target.with_name(target.name + ".gbfr-export.tmp")
+			shutil.copy2(source, temporary)
+			temporary_files.append((temporary, target))
+		for temporary, target in temporary_files:
+			os.replace(temporary, target)
+	finally:
+		for temporary, _ in temporary_files:
+			try:
+				temporary.unlink()
+			except FileNotFoundError:
+				pass
+
+
+class ExportSomeData(Operator, ImportHelper):
 	"""Exporter for Granblue Fantasy Relink meshes"""
 	bl_idname = "gbfr.export_mesh"  # important since its how bpy.ops.import_test.some_data is constructed
-	bl_label = "Export"
+	bl_label = "导出到 GBFR 工作区"
+	bl_description = "选择 workspace.json 并覆盖其中登记的 unpack 模型文件"
 	
-	# ImportHelper mix-in class uses this.
-	filename_ext = ".mmesh"
+	filename_ext = ".json"
 
 	filter_glob: StringProperty(
-		default="*.mmesh;*.minfo", #Show .minfo files in selector, but always set the extension to mmesh
+		default="workspace.json;*.json",
 		options={'HIDDEN'},
 		maxlen=255,  # Max internal buffer length, longer would be clamped.
 	)
 	export_scale: bpy.props.FloatProperty(name="Scale", default=1.0)
+
+	def invoke(self, context, event):
+		from .gbfr_session import active_session_collection
+		collection = active_session_collection(context)
+		if collection is not None and collection.gbfr_session.workspace_path:
+			self.filepath = collection.gbfr_session.workspace_path
+		context.window_manager.fileselect_add(self)
+		return {'RUNNING_MODAL'}
+
+	def draw(self, context):
+		layout = self.layout
+		layout.prop(self, "export_scale")
+		from .gbfr_session import active_session_collection
+		collection = active_session_collection(context)
+		box = layout.box()
+		if collection is None:
+			box.label(text="没有激活的 minfo 工作区", icon='ERROR')
+			return
+		state = collection.gbfr_session
+		box.label(text=f"当前模型: {state.model_id}", icon='ARMATURE_DATA')
+		try:
+			targets = resolve_model_export_targets(self.filepath, state.model_id)
+		except Exception as err:
+			box.alert = True
+			box.label(text=str(err), icon='ERROR')
+			return
+		box.label(text="将覆盖以下 unpack 文件", icon='EXPORT')
+		for target in (targets.minfo, targets.skeleton, targets.mmesh):
+			box.label(text=str(target.relative_to(targets.workspace_root)), icon='FILE')
+		box.separator()
+		box.label(text=str(targets.debug_json.relative_to(targets.workspace_root)), icon='TEXT')
+		box.label(text="build 不会被写入", icon='INFO')
 
 	def execute(self, context):
 		# if mesh_count > 1:
 			# bpy.ops.gbfr.display_error('INVOKE_DEFAULT')
 			# return {'FINISHED'}
 
-		original_scene = bpy.context.scene # Store the current scene to revert later
+		from .gbfr_session import active_session_collection
+		collection = active_session_collection(context)
+		if collection is None:
+			self.report({'ERROR'}, "请先激活一个 minfo 工作区")
+			return {'CANCELLED'}
+		state = collection.gbfr_session
+		try:
+			targets = resolve_model_export_targets(self.filepath, state.model_id)
+		except Exception as err:
+			state.last_status = str(err)
+			self.report({'ERROR'}, str(err))
+			return {'CANCELLED'}
 
-		export_scene = bpy.data.scenes.new(name="Export_Scene") # Create a new scene for export
-		export_collection = bpy.data.collections.new(name="Collection")
-		export_scene.collection.children.link(export_collection)
+		export_scene = None
+		staging = None
 
 		try:
+			export_scene = bpy.data.scenes.new(name="Export_Scene") # Create a new scene for export
+			export_collection = bpy.data.collections.new(name="Collection")
+			export_scene.collection.children.link(export_collection)
+			staging = tempfile.TemporaryDirectory(prefix=f"gbfr_{targets.model_id}_")
+			staging_root = Path(staging.name)
+			shutil.copy2(targets.template_minfo, staging_root / f"{targets.model_id}.minfo")
 			utils_set_mode('OBJECT') # Set Object Mode
 
 			# Get model's armature and mesh
@@ -609,20 +689,34 @@ class ExportSomeData(Operator, ExportHelper):
 				selected_obj = context.object
 				print(f"selected_obj.name {selected_obj.name}")
 
-				write_some_data(context, self.filepath, self.export_scale) # Export the model
+				write_some_data(
+					context,
+					str(staging_root / f"{targets.model_id}.mmesh"),
+					self.export_scale,
+					str(targets.flatc) if targets.flatc else None,
+				)
+				_install_workspace_export(staging_root / "_Exported_MInfo", targets)
+				state.workspace_path = str(targets.workspace_json)
+				state.resolved_minfo_path = str(targets.minfo)
+				state.last_status = "模型已导出到 unpack"
 
 			else: raise UserWarning(
 				format_exception("ERROR: No model selected, select the model's armature or mesh before export.")
 				)
 
-			self.report({'INFO'}, f"Export Finished!")
+			self.report({'INFO'}, f"已导出到 {targets.workspace_root / 'unpack'}")
 
 		except Exception as err:
-			raise #Exception(format_exception(str(err))) # Print noob friendly exception
-			# raise Exception(str(err))
+			state.last_status = f"模型导出失败: {err}"
+			self.report({'ERROR'}, state.last_status)
+			return {'CANCELLED'}
 		finally:
-			try: bpy.data.scenes.remove(export_scene) # Make sure export scene gets deleted
+			try:
+				if export_scene is not None:
+					bpy.data.scenes.remove(export_scene) # Make sure export scene gets deleted
 			except: pass
+			if staging is not None:
+				staging.cleanup()
 
 		return {'FINISHED'}
 
@@ -655,7 +749,7 @@ class ErrorDisplay(bpy.types.Operator):
 
 # Only needed if you want to add into a dynamic menu
 def menu_func_export(self, context):
-	self.layout.operator(ExportSomeData.bl_idname, text="Granblue Fantasy Relink (.mmesh)")
+	self.layout.operator(ExportSomeData.bl_idname, text="Granblue Fantasy Relink 工作区")
 
 
 # Register and add to the "file selector" menu (required to use F3 search "Text Export Operator" for quick access).

@@ -37,6 +37,19 @@ class ModelBundle:
     data_tools: Path | None
 
 
+@dataclass(frozen=True)
+class ModelExportTargets:
+    workspace_json: Path
+    workspace_root: Path
+    model_id: str
+    template_minfo: Path
+    minfo: Path
+    skeleton: Path
+    mmesh: Path
+    debug_json: Path
+    flatc: Path | None
+
+
 def _same_path(left: Path, right: Path) -> bool:
     try:
         return left.resolve().samefile(right.resolve())
@@ -90,19 +103,68 @@ def _find_data_tools(workspace_root: Path) -> Path | None:
     return None
 
 
-def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | None = None) -> ModelBundle:
-    selected = Path(minfo_path).expanduser().resolve()
-    if selected.suffix.casefold() != ".minfo" or not selected.is_file():
-        raise WorkspaceError(f"请选择存在的 .minfo 文件: {selected}")
+def _find_flatc(workspace_root: Path) -> Path | None:
+    for directory in (workspace_root, *workspace_root.parents):
+        candidate = directory / "_lib" / "tools" / "flatc.exe"
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
 
-    workspace_path = Path(workspace_json).resolve() if workspace_json else find_workspace_json(selected)
-    root = workspace_path.parent
+
+def _read_workspace(workspace_json: str | Path) -> tuple[Path, Path, dict]:
+    workspace_path = Path(workspace_json).expanduser().resolve()
+    if not workspace_path.is_file():
+        raise WorkspaceError(f"请选择存在的 workspace.json: {workspace_path}")
     try:
         document = json.loads(workspace_path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as error:
         raise WorkspaceError(f"无法读取 workspace.json: {error}") from error
     if int(document.get("Version", 0)) != 1:
         raise WorkspaceError(f"不支持的 workspace.json 版本: {document.get('Version')}")
+    return workspace_path, workspace_path.parent, document
+
+
+def _unpack_target(root: Path, unpack_root: Path, record: dict, file_type: str) -> Path:
+    value = record.get("Input")
+    if not value:
+        raise WorkspaceError(f"{file_type} 记录缺少 unpack 输入路径")
+    target = _asset_path(root, value).resolve()
+    try:
+        target.relative_to(unpack_root)
+    except ValueError as error:
+        raise WorkspaceError(f"{file_type} 输入路径不在工作区 unpack 中: {target}") from error
+    return target
+
+
+def resolve_model_export_targets(workspace_json: str | Path, model_id: str) -> ModelExportTargets:
+    workspace_path, root, document = _read_workspace(workspace_json)
+    model_id = str(model_id).strip()
+    if not model_id:
+        raise WorkspaceError("当前 minfo 会话缺少模型 ID")
+    records = list(document.get("ModelFiles") or [])
+    minfo_record = _find_model_record(records, "minfo", model_id)
+    skeleton_record = _find_model_record(records, "skeleton", model_id)
+    mmesh_record = _find_model_record(records, "mmesh", model_id)
+    unpack_root = _asset_path(root, str(document.get("UnpackRoot") or "unpack")).resolve()
+    return ModelExportTargets(
+        workspace_json=workspace_path,
+        workspace_root=root,
+        model_id=model_id,
+        template_minfo=_existing_asset_path(root, minfo_record),
+        minfo=_unpack_target(root, unpack_root, minfo_record, "minfo"),
+        skeleton=_unpack_target(root, unpack_root, skeleton_record, "skeleton"),
+        mmesh=_unpack_target(root, unpack_root, mmesh_record, "mmesh"),
+        debug_json=root / ".gbfr" / "exports" / f"{model_id}.json",
+        flatc=_find_flatc(root),
+    )
+
+
+def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | None = None) -> ModelBundle:
+    selected = Path(minfo_path).expanduser().resolve()
+    if selected.suffix.casefold() != ".minfo" or not selected.is_file():
+        raise WorkspaceError(f"请选择存在的 .minfo 文件: {selected}")
+
+    workspace_path, root, document = _read_workspace(workspace_json or find_workspace_json(selected))
 
     records = list(document.get("ModelFiles") or [])
     minfo_matches = []
