@@ -13,7 +13,8 @@ assert hasattr(bpy.types.Scene, "gbfr_workspace")
 assert bpy.types.Panel.bl_rna_get_subclass_py("VIEW3D_PT_GBFR_Workspace") is not None
 for panel_id in (
     "VIEW3D_PT_GBFR_Session_Objects", "VIEW3D_PT_GBFR_Session_Materials",
-    "VIEW3D_PT_GBFR_Cloth_Editor", "VIEW3D_PT_GBFR_Sop_Inspector",
+    "VIEW3D_PT_GBFR_Cloth_Editor", "VIEW3D_PT_GBFR_Clp_Editor",
+    "VIEW3D_PT_GBFR_Clh_Editor", "VIEW3D_PT_GBFR_Sop_Inspector",
     "VIEW3D_PT_GBFR_Animation_Preview",
 ):
     panel = bpy.types.Panel.bl_rna_get_subclass_py(panel_id)

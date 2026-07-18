@@ -28,6 +28,10 @@ state = armatures[0].gbfr_cloth
 assert state.enabled
 assert len(state.clp_groups) > 0
 assert len(state.clh_layers) > 0
+assert state.clp_edit_mode == "GROUP"
+assert state.clp_header_section == "SECTION_0"
+assert state.clp_node_section == "TOPOLOGY"
+assert state.clh_collision_section == "SHAPE"
 assert Path(state.workspace_path).name == "workspace.json"
 assert any("gbfr_bone_id" in bone for bone in armatures[0].data.bones)
 bone_by_id = {int(bone["gbfr_bone_id"]): bone.name for bone in armatures[0].data.bones}
