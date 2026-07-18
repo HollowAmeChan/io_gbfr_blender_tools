@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import textwrap
 
 import bpy
 from bpy.props import BoolProperty, CollectionProperty, IntProperty, PointerProperty, StringProperty
@@ -16,6 +15,7 @@ from .gbfr_sop import (
     load_catalog, load_sop,
 )
 from .gbfr_workspace import ModelBundle, resolve_model_bundle
+from .gbfr_session import active_session_armature
 from .utils import bone_names_mapping
 
 
@@ -225,12 +225,7 @@ def populate_sop_state(armature: bpy.types.Object, bundle: ModelBundle) -> None:
 
 
 def _armature(context):
-    obj = context.object
-    if obj is None:
-        return None
-    if obj.type == "ARMATURE":
-        return obj
-    return obj.find_armature() if obj.type == "MESH" else None
+    return active_session_armature(context)
 
 
 class GBFR_OT_SopReload(Operator):
@@ -261,8 +256,9 @@ class GBFR_UL_SopOperations(UIList):
 
 
 class GBFR_PT_SopInspector(Panel):
-    bl_label = "SOP 骨骼约束"
+    bl_label = "SOP 约束"
     bl_idname = "VIEW3D_PT_GBFR_Sop_Inspector"
+    bl_parent_id = "VIEW3D_PT_GBFR_Workspace"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "GBFR"
@@ -275,37 +271,18 @@ class GBFR_PT_SopInspector(Panel):
     def draw(self, context):
         state = _armature(context).gbfr_sop
         layout = self.layout
-        warning = layout.box()
-        warning.label(text="SOP 当前只支持单向导入，不支持导出", icon="ERROR")
-        warning.label(text="核心类型使用 Blender 分轴旋转近似；不是游戏公式的完整替代")
         row = layout.row(align=True)
-        row.prop(state, "preview_constraints", toggle=True, icon="CONSTRAINT")
-        row.operator("gbfr.sop_reload", text="重新载入", icon="FILE_REFRESH")
-        layout.label(text=state.last_status, icon="INFO")
-        summary = layout.box()
-        summary.label(text=f"文件 {Path(state.source_path).name} / {state.version}")
-        summary.label(text=f"通过自检并近似：{state.preview_operation_count} 条操作 / {state.imported_constraint_count} 个 Constraint")
-        summary.label(text=f"自检拦截：{state.guarded_count} 条")
-        summary.label(text=f"未探明、只读：{state.unresolved_count} 条")
+        row.prop(state, "preview_constraints", text="近似约束", toggle=True, icon="CONSTRAINT")
+        row.label(text=f"{state.preview_operation_count} 可用 · {state.unresolved_count} 未探明 · {state.guarded_count} 拦截")
         if state.missing_count:
-            summary.label(text=f"字段或骨骼缺失：{state.missing_count} 条", icon="ERROR")
+            row.label(text=str(state.missing_count), icon="ERROR")
         layout.template_list("GBFR_UL_SopOperations", "", state, "operations", state, "active_operation_index", rows=7)
         if not state.operations:
             return
         item = state.operations[state.active_operation_index]
-        details = layout.box()
-        details.label(text=f"{item.operation_name}  {item.type_hash}")
-        details.label(text=f"Target: {item.target_name}")
-        details.label(text=f"Source: {item.source_name}")
-        details.label(text=f"探明: {item.discovery_label}")
-        details.label(text=f"Modtools: {item.runtime_label}")
-        details.label(text=f"Blender: {STATUS_LABELS.get(item.preview_status, item.preview_status)}")
-        for line in textwrap.wrap(item.purpose, width=38) or [""]:
-            details.label(text=line)
-        raw = layout.box()
-        raw.label(text=f"原始属性 / metadata {item.metadata}")
-        for value in json.loads(item.properties_json or "[]"):
-            raw.label(text=f"{value['hash']}  {value['type']}={value['value']}  raw={value['raw']}")
+        details = layout.column(align=True)
+        details.label(text=f"{item.target_name} ← {item.source_name}", icon="BONE_DATA")
+        details.label(text=STATUS_LABELS.get(item.preview_status, item.preview_status))
 
 
 classes = (

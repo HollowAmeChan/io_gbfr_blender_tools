@@ -9,7 +9,7 @@ DIR_PATH = os.path.dirname(os.path.abspath(__file__))
 ICONS_PATH = os.path.join(DIR_PATH, "icons")
 PCOLL = None
 preview_collections = {}
-curr_game_magic = utils_get_magic()
+curr_game_magic = None
 
 # Define the panel class
 class GBFRToolPanel_Fixes(bpy.types.Panel):
@@ -499,8 +499,7 @@ class ButtonGitHub(bpy.types.Operator):
 	
 
 
-classes = [GBFRToolPanel_Fixes, GBFRToolPanel_Utilities, GBFRToolPanel_Materials, GBFRToolPanel_Advanced, GBFRToolPanel_Credits,
-			ButtonSplitMeshAlongUVs, ButtonTranslateBonesToGBFR, ButtonTranslateBonesToUnityBlender, 
+classes = [ButtonSplitMeshAlongUVs, ButtonTranslateBonesToGBFR, ButtonTranslateBonesToUnityBlender,
 			ButtonSeparateByMaterial, ButtonSortMaterials, ButtonJoinAllMeshes, ButtonSelect0WeightVertices, 
 			ButtonLimitAndNormalizeAllWeights, ButtonDeleteLooseGeometry, ButtonAddMaterialIndex, ButtonAddMagicNumber,
 			ButtonDiscord, ButtonWebsite, ButtonGitHub
@@ -508,30 +507,14 @@ classes = [GBFRToolPanel_Fixes, GBFRToolPanel_Utilities, GBFRToolPanel_Materials
 
 # Register the panel class
 def register():
-	global preview_collections
 	for cls in classes:
 		bpy.utils.register_class(cls)
-	# Load in custom icons
-	icon_names = ["GBFR", "GBFR_Modding", "KEEPITCLEAN", "discord", "github"]
-	pcoll = bpy.utils.previews.new()
-	for icon_name in icon_names:
-		pcoll.load(icon_name, os.path.join(ICONS_PATH, icon_name + ".png"), 'IMAGE')
-	# Clear and assign icons to preview collection
-	if preview_collections.get('icons'):
-		bpy.utils.previews.remove(preview_collections['icons'])
-	preview_collections['icons'] = pcoll
 
 
 
 # Unregister the panel class
 def unregister():
-	global preview_collections
-	# Remove the image preview collection
-	for pcoll in preview_collections.values():
-		bpy.utils.previews.remove(pcoll)
-	preview_collections.clear()
-
-	for cls in classes:
+	for cls in reversed(classes):
 		bpy.utils.unregister_class(cls)
 
 # Test the panel in Blender

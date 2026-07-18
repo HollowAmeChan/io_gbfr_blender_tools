@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 import math
-from pathlib import Path
 import uuid
 
 import bpy
@@ -14,6 +13,7 @@ from bpy.types import Operator, Panel, PropertyGroup, UIList
 from mathutils import Euler, Matrix, Quaternion, Vector
 
 from .gbfr_animation import AnimationClip, load_mot, read_mot_header
+from .gbfr_session import active_session_armature
 from .gbfr_workspace import ModelBundle, resolve_model_bundle
 
 
@@ -303,12 +303,7 @@ class GBFR_OT_AnimationRefresh(Operator):
 
 
 def _armature(context):
-    obj = context.object
-    if obj is None:
-        return None
-    if obj.type == "ARMATURE":
-        return obj
-    return obj.find_armature() if obj.type == "MESH" else None
+    return active_session_armature(context)
 
 
 class GBFR_UL_Animations(UIList):
@@ -326,8 +321,9 @@ class GBFR_UL_Animations(UIList):
 
 
 class GBFR_PT_AnimationPreview(Panel):
-    bl_label = "MOT 动画预览"
+    bl_label = "MOT 动画"
     bl_idname = "VIEW3D_PT_GBFR_Animation_Preview"
+    bl_parent_id = "VIEW3D_PT_GBFR_Workspace"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "GBFR"
@@ -341,26 +337,20 @@ class GBFR_PT_AnimationPreview(Panel):
         armature = _armature(context)
         state = armature.gbfr_animation
         layout = self.layout
-        notice = layout.box()
-        notice.label(text="按需预览：不创建 Action、Slot 或 NLA", icon="INFO")
         row = layout.row(align=True)
         row.prop(state, "search", text="", icon="VIEWZOOM")
-        row.operator("gbfr.animation_refresh", text="", icon="FILE_REFRESH")
         layout.template_list("GBFR_UL_Animations", "", state, "animations", state, "active_animation_index", rows=10)
         controls = layout.row(align=True)
         controls.operator("gbfr.animation_play_pause", text="", icon="PAUSE" if context.screen and context.screen.is_animation_playing else "PLAY")
         controls.operator("gbfr.animation_first_frame", text="", icon="REW")
         controls.operator("gbfr.animation_stop", text="", icon="CANCEL")
-        controls.operator("gbfr.animation_load", text="重新载入", icon="FILE_REFRESH")
-        layout.label(text=state.last_status, icon="TIME")
         if state.animations:
             item = state.animations[state.active_animation_index]
-            details = layout.box()
-            details.label(text=f"{item.display_name} / {item.category}")
-            details.label(text=f"内部名称：{item.internal_name}")
-            details.label(text=f"{item.frame_count} 帧 @ 60 FPS / {item.track_count} 轨道")
+            details = layout.row(align=True)
+            details.label(text=item.internal_name or item.display_name, icon="ACTION")
+            details.label(text=f"{item.frame_count}f · {item.track_count}轨")
             if state.preview_active:
-                details.prop(context.scene, "frame_current", text="预览帧")
+                layout.prop(context.scene, "frame_current", text="帧")
 
 
 classes = (

@@ -20,8 +20,9 @@ from .gbfr_cloth_format import (
     CLP_HEADER_FLOATS, CLP_HEADER_INTS, ClhCollision, ClhDocument,
     ClpDocument, ClpNode, MISSING_BONE, load_clh, load_clp, write_clh, write_clp,
 )
-from .gbfr_workspace import ModelBundle, WorkspaceError, resolve_model_bundle
+from .gbfr_workspace import ModelBundle, resolve_model_bundle
 from .gbfr_cloth_metadata import CLP_HEADER_GROUPS, CLP_HEADER_UI
+from .gbfr_session import active_session_armature
 from .utils import bone_names_mapping
 
 
@@ -329,14 +330,7 @@ def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> Non
 
 
 def _armature(context) -> bpy.types.Object | None:
-    obj = context.object
-    if obj is None:
-        return None
-    if obj.type == "ARMATURE":
-        return obj
-    if obj.type == "MESH":
-        return obj.find_armature()
-    return None
+    return active_session_armature(context)
 
 
 def _node_value(source) -> ClpNode:
@@ -566,8 +560,9 @@ class GBFR_UL_ClhCollisions(UIList):
 
 
 class GBFR_PT_ClothEditor(Panel):
-    bl_label = "Cloth 数据"
+    bl_label = "Cloth"
     bl_idname = "VIEW3D_PT_GBFR_Cloth_Editor"
+    bl_parent_id = "VIEW3D_PT_GBFR_Workspace"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "GBFR"
@@ -581,23 +576,14 @@ class GBFR_PT_ClothEditor(Panel):
         armature = _armature(context)
         state = armature.gbfr_cloth
         layout = self.layout
-        layout.label(text=f"{state.character_id} / {state.model_id}", icon="ARMATURE_DATA")
         row = layout.row(align=True)
-        row.operator("gbfr.cloth_reload", icon="FILE_REFRESH")
-        op = row.operator("gbfr.cloth_export", text="全部写入 build", icon="EXPORT")
-        op.kind = "ALL"
-        if state.last_status:
-            layout.label(text=state.last_status, icon="INFO")
-
-        box = layout.box()
-        box.label(text="视图调试（静态数据）", icon="HIDE_OFF")
-        row = box.row(align=True)
         row.prop(state, "show_topology", toggle=True)
         row.prop(state, "show_collisions", toggle=True)
         row.prop(state, "show_points", toggle=True)
-        box.prop(state, "preview_all_clp")
-        box.prop(state, "collision_layer_mode")
-        box.prop(state, "draw_in_front")
+        view = layout.row(align=True)
+        view.prop(state, "preview_all_clp")
+        view.prop(state, "collision_layer_mode")
+        view.prop(state, "draw_in_front", text="置前")
 
         layout.separator()
         layout.label(text="CLP 求解组")
@@ -812,12 +798,14 @@ def _draw_armature(armature, batches):
 def _draw_overlay():
     context = bpy.context
     batches = []
-    draw_in_front = False
-    for armature in (obj for obj in context.visible_objects if obj.type == "ARMATURE"):
-        state = getattr(armature, "gbfr_cloth", None)
-        if state and state.enabled:
-            draw_in_front = draw_in_front or state.draw_in_front
-            _draw_armature(armature, batches)
+    armature = active_session_armature(context)
+    if armature is None or armature not in context.visible_objects:
+        return
+    state = getattr(armature, "gbfr_cloth", None)
+    if not state or not state.enabled:
+        return
+    draw_in_front = state.draw_in_front
+    _draw_armature(armature, batches)
     batches = [batch for batch in batches if batch[0]]
     if not batches:
         return
