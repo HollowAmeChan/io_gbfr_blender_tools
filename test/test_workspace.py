@@ -20,6 +20,8 @@ class WorkspaceTests(unittest.TestCase):
                 "mot": "source/data/pl/pl9999/pl9999_0001.mot",
                 "skeleton": "unpack/data/model/pl/pl9999/pl9999.skeleton",
                 "mmesh": "unpack/data/model_streaming/lod0/pl9999.mmesh",
+                "mmesh_lod1": "unpack/data/model_streaming/lod1/pl9999.mmesh",
+                "mmesh_shadow": "unpack/data/model_streaming/shadowlod0/pl9999.mmesh",
                 "material": "unpack/data/model/pl/pl9999/vars/0.mmat.json",
                 "clp": "unpack/data/pl/pl9999/cloth/pl9999_0_0_clp.bxm.xml",
                 "clh": "unpack/data/pl/pl9999/cloth/pl9999_0_1_clh.bxm.xml",
@@ -34,6 +36,8 @@ class WorkspaceTests(unittest.TestCase):
                     {"FileType": "minfo", "Input": paths["minfo"], "Source": paths["source_minfo"]},
                     {"FileType": "skeleton", "Input": paths["skeleton"]},
                     {"FileType": "mmesh", "Input": paths["mmesh"]},
+                    {"FileType": "mmesh", "Input": paths["mmesh_shadow"]},
+                    {"FileType": "mmesh", "Input": paths["mmesh_lod1"]},
                 ],
                 "ClothFiles": [
                     {"Category": "clp", "GroupId": 0, "Xml": paths["clp"], "Source": "source/a.bxm", "Output": "build/a.bxm"},
@@ -44,6 +48,7 @@ class WorkspaceTests(unittest.TestCase):
             workspace_path.write_text(json.dumps(workspace), encoding="utf-8")
             bundle = resolve_model_bundle(root / paths["source_minfo"])
             self.assertEqual(root / paths["mmesh"], bundle.mmesh)
+            self.assertEqual(tuple(root / paths[name] for name in ("mmesh", "mmesh_lod1", "mmesh_shadow")), bundle.mmeshes)
             self.assertEqual(root / paths["material"], bundle.material_json)
             self.assertEqual(root / paths["sop"], bundle.sop)
             self.assertEqual((root / paths["mot"],), bundle.animations)
@@ -54,6 +59,7 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(root / paths["minfo"], targets.minfo)
             self.assertEqual(root / paths["skeleton"], targets.skeleton)
             self.assertEqual(root / paths["mmesh"], targets.mmesh)
+            self.assertEqual(tuple(root / paths[name] for name in ("mmesh", "mmesh_lod1", "mmesh_shadow")), targets.mmeshes)
             self.assertEqual(root / ".gbfr/exports/pl9999.json", targets.debug_json)
 
     def test_rejects_unregistered_minfo(self):

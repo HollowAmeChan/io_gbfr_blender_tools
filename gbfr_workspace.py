@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 
 
 class WorkspaceError(RuntimeError):
@@ -28,13 +29,18 @@ class ModelBundle:
     model_id: str
     minfo: Path
     skeleton: Path
-    mmesh: Path
+    mmeshes: tuple[Path, ...]
     material_json: Path | None
     sop: Path | None
     sop_report: dict | None
     animations: tuple[Path, ...]
     cloth_files: tuple[ClothFileRecord, ...]
     data_tools: Path | None
+
+    @property
+    def mmesh(self) -> Path:
+        """LOD0 compatibility alias for code not yet migrated to multi-LOD."""
+        return self.mmeshes[0]
 
 
 @dataclass(frozen=True)
@@ -45,9 +51,14 @@ class ModelExportTargets:
     template_minfo: Path
     minfo: Path
     skeleton: Path
-    mmesh: Path
+    mmeshes: tuple[Path, ...]
     debug_json: Path
     flatc: Path | None
+
+    @property
+    def mmesh(self) -> Path:
+        """LOD0 compatibility alias for the legacy single-mmesh exporter."""
+        return self.mmeshes[0]
 
 
 def _same_path(left: Path, right: Path) -> bool:
@@ -93,6 +104,25 @@ def _find_model_record(records: list[dict], file_type: str, stem: str) -> dict:
     if len(matches) != 1:
         raise WorkspaceError(f"workspace.json 中无法唯一确定 {stem}.{file_type}")
     return matches[0]
+
+
+def _stream_record_order(record: dict) -> tuple[int, int, str]:
+    value = str(record.get("Input") or record.get("Source") or "").replace("\\", "/")
+    match = re.search(r"/(shadow)?lod(\d+)/", "/" + value.casefold().lstrip("/"))
+    if match:
+        return (1 if match.group(1) else 0, int(match.group(2)), value.casefold())
+    return (2, 0, value.casefold())
+
+
+def _find_mmesh_records(records: list[dict], model_id: str) -> list[dict]:
+    matches = [
+        record for record in records
+        if str(record.get("FileType", "")).casefold() == "mmesh"
+        and Path(record.get("Input") or record.get("Source") or "").stem.casefold() == model_id.casefold()
+    ]
+    if not matches:
+        raise WorkspaceError(f"workspace.json 中未登记 {model_id}.mmesh")
+    return sorted(matches, key=_stream_record_order)
 
 
 def _find_data_tools(workspace_root: Path) -> Path | None:
@@ -144,7 +174,7 @@ def resolve_model_export_targets(workspace_json: str | Path, model_id: str) -> M
     records = list(document.get("ModelFiles") or [])
     minfo_record = _find_model_record(records, "minfo", model_id)
     skeleton_record = _find_model_record(records, "skeleton", model_id)
-    mmesh_record = _find_model_record(records, "mmesh", model_id)
+    mmesh_records = _find_mmesh_records(records, model_id)
     unpack_root = _asset_path(root, str(document.get("UnpackRoot") or "unpack")).resolve()
     return ModelExportTargets(
         workspace_json=workspace_path,
@@ -153,7 +183,7 @@ def resolve_model_export_targets(workspace_json: str | Path, model_id: str) -> M
         template_minfo=_existing_asset_path(root, minfo_record),
         minfo=_unpack_target(root, unpack_root, minfo_record, "minfo"),
         skeleton=_unpack_target(root, unpack_root, skeleton_record, "skeleton"),
-        mmesh=_unpack_target(root, unpack_root, mmesh_record, "mmesh"),
+        mmeshes=tuple(_unpack_target(root, unpack_root, record, "mmesh") for record in mmesh_records),
         debug_json=root / ".gbfr" / "exports" / f"{model_id}.json",
         flatc=_find_flatc(root),
     )
@@ -180,7 +210,7 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
     model_id = selected.stem
     minfo = _existing_asset_path(root, minfo_matches[0])
     skeleton = _existing_asset_path(root, _find_model_record(records, "skeleton", model_id))
-    mmesh = _existing_asset_path(root, _find_model_record(records, "mmesh", model_id))
+    mmeshes = tuple(_existing_asset_path(root, record) for record in _find_mmesh_records(records, model_id))
     character_id = str(document.get("CharacterId") or model_id)
 
     material_candidate = root / "unpack" / "data" / "model" / model_id[:2] / model_id / "vars" / "0.mmat.json"
@@ -232,7 +262,7 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         model_id=model_id,
         minfo=minfo,
         skeleton=skeleton,
-        mmesh=mmesh,
+        mmeshes=mmeshes,
         material_json=material_json,
         sop=sop,
         sop_report=sop_report,
