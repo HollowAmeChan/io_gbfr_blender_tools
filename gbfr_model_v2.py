@@ -11,6 +11,8 @@ from .Entities.MInfo_ModelInfo.VertexBufferType import VertexBufferType
 from .Entities.ModelSkeleton import ModelSkeleton
 from .utils import *
 
+_DEFAULT_SKELETON = object()
+
 def parse_skeleton_file(skeleton_filepath):
 	skeleton = None
 	if os.path.isfile(skeleton_filepath):
@@ -233,7 +235,7 @@ def read_some_data(
 	import_scale=1.0,
 	bone_scale=1.0,
 	model_collection=None,
-	skeleton_filepath=None,
+	skeleton_filepath=_DEFAULT_SKELETON,
 	return_objects=False,
 ):
 	total_import_timer_start = time.perf_counter() # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
@@ -247,7 +249,9 @@ def read_some_data(
 		obj.select_set(False) #Deselect everything
 	
 	model_info = parse_mesh_info_file(minfo_filepath) # Parse the mesh info
-	skeleton = parse_skeleton_file(skeleton_filepath or os.path.splitext(minfo_filepath)[0] + ".skeleton")
+	if skeleton_filepath is _DEFAULT_SKELETON:
+		skeleton_filepath = os.path.splitext(minfo_filepath)[0] + ".skeleton"
+	skeleton = parse_skeleton_file(skeleton_filepath) if skeleton_filepath else None
 	armature = build_skeleton(skeleton, model_collection, bone_scale) if skeleton else None # Parse the skeleton
 	
 	if armature is not None: 
@@ -413,11 +417,11 @@ def read_some_data(
 			# Build Mesh Materials first
 			for mat_index, mat_data in enumerate(MaterialsTable):
 				mat_name = str(mat_data.UniqueNameHash())
-				mat = bpy.data.materials.get(mat_name) # Get material if it already exists
-				if not mat:
-					mat = bpy.data.materials.new(name=mat_name)
-				if mat not in materials_list:
-					materials_list.append(mat) # Collect in list to be attached to the mesh when a chunk uses the material
+				if mat_index < len(materials_list):
+					mat = materials_list[mat_index]
+				else:
+					mat = bpy.data.materials.new(name=f"{model_name}_{mat_name}")
+					materials_list.append(mat)
 				mat["MaterialID"] = mat_index # Add material ID as custom property
 				mat["unique_name_hash"] = mat_name
 				mat["material_flags"] = byte_to_bool_array(mat_data.MaterialFlags())

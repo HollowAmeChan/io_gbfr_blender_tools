@@ -27,7 +27,7 @@ def read_some_data(context, filepath, import_scale=1.0, bone_scale=1.0):
             import_scale=import_scale,
             bone_scale=bone_scale,
             model_collection=collection,
-            skeleton_filepath=str(bundle.skeleton),
+            skeleton_filepath=str(bundle.skeleton) if bundle.skeleton else None,
             return_objects=True,
         )
         root = imported["root"]

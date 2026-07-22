@@ -88,7 +88,7 @@ class GBFR_OT_RestoreSessionData(Operator):
         collection = active_session_collection(context)
         armature = active_session_armature(context)
         meshes = active_session_meshes(context)
-        if collection is None or armature is None or not meshes:
+        if collection is None or not meshes:
             return {"CANCELLED"}
         state = collection.gbfr_session
         selected = Path(state.resolved_minfo_path)
@@ -103,9 +103,10 @@ class GBFR_OT_RestoreSessionData(Operator):
 
             for mesh in meshes:
                 apply_workspace_materials(mesh, bundle)
-            populate_cloth_state(armature, bundle)
-            populate_sop_state(armature, bundle)
-            populate_animation_state(armature, bundle)
+            if armature is not None:
+                populate_cloth_state(armature, bundle)
+                populate_sop_state(armature, bundle)
+                populate_animation_state(armature, bundle)
             state.resolved_minfo_path = str(bundle.minfo)
             state.workspace_path = str(bundle.workspace_json)
             state.last_status = "已恢复工作区数据"

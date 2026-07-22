@@ -643,9 +643,9 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 	unique_materials_dict = dict(sorted(unique_materials_dict.items())) # Sort by material_ids
 	materials_table = [
 		{
-			"unique_name_hash": int(material.name) 
-							if int(material.name) 
-							else XXHash32Custom.Hash_string(material.name), # Hash the material name
+			"unique_name_hash": int(material.get("unique_name_hash"))
+							if material.get("unique_name_hash") is not None
+							else XXHash32Custom.Hash_string(material.name),
 			"material_flags": bool_array_to_byte(material['material_flags']) 
 							if 'material_flags' in material 
 							else bool_array_to_byte([False*8]) # Unknown ubyte material flags

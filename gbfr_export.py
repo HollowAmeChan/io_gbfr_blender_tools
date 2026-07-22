@@ -57,8 +57,9 @@ def _install_workspace_export(staging_root, targets):
     model_directory = staging_root / "model" / targets.model_id[:2] / targets.model_id
     files = [
         (model_directory / f"{targets.model_id}.minfo", targets.minfo),
-        (model_directory / f"{targets.model_id}.skeleton", targets.skeleton),
     ]
+    if targets.skeleton is not None:
+        files.append((model_directory / f"{targets.model_id}.skeleton", targets.skeleton))
     for target in targets.mmeshes:
         stream_level = target.parent.name
         files.append((
@@ -118,6 +119,8 @@ class ExportSomeData(Operator, ImportHelper):
             return
         box.label(text="将覆盖以下 unpack 文件", icon="EXPORT")
         for target in (targets.minfo, targets.skeleton, *targets.mmeshes):
+            if target is None:
+                continue
             box.label(text=str(target.relative_to(targets.workspace_root)), icon="FILE")
         box.label(text="不会写入 build；minfo 由 v2 构建器直接生成", icon="INFO")
 

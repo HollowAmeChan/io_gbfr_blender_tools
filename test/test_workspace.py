@@ -70,6 +70,29 @@ class WorkspaceTests(unittest.TestCase):
             with self.assertRaises(WorkspaceError):
                 resolve_model_bundle(selected)
 
+    def test_allows_unrigged_model_without_skeleton(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            minfo = root / "unpack/data/model/bg/bg9999/bg9999.minfo"
+            source = root / "source/data/model/bg/bg9999/bg9999.minfo"
+            mmesh = root / "unpack/data/model_streaming/lod0/bg9999.mmesh"
+            for path in (minfo, source, mmesh):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+            workspace_path = root / "workspace.json"
+            workspace_path.write_text(json.dumps({
+                "Version": 1,
+                "ModelFiles": [
+                    {"FileType": "minfo", "Input": str(minfo.relative_to(root)), "Source": str(source.relative_to(root))},
+                    {"FileType": "mmesh", "Input": str(mmesh.relative_to(root))},
+                ],
+            }), encoding="utf-8")
+
+            bundle = resolve_model_bundle(minfo)
+            targets = resolve_model_export_targets(workspace_path, "bg9999")
+            self.assertIsNone(bundle.skeleton)
+            self.assertIsNone(targets.skeleton)
+
     def test_export_rejects_model_target_outside_unpack(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

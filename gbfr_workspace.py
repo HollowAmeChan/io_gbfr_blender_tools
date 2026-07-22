@@ -28,7 +28,7 @@ class ModelBundle:
     character_id: str
     model_id: str
     minfo: Path
-    skeleton: Path
+    skeleton: Path | None
     mmeshes: tuple[Path, ...]
     material_json: Path | None
     sop: Path | None
@@ -50,7 +50,7 @@ class ModelExportTargets:
     model_id: str
     template_minfo: Path
     minfo: Path
-    skeleton: Path
+    skeleton: Path | None
     mmeshes: tuple[Path, ...]
 
     @property
@@ -102,6 +102,17 @@ def _find_model_record(records: list[dict], file_type: str, stem: str) -> dict:
     if len(matches) != 1:
         raise WorkspaceError(f"workspace.json 中无法唯一确定 {stem}.{file_type}")
     return matches[0]
+
+
+def _find_optional_model_record(records: list[dict], file_type: str, stem: str) -> dict | None:
+    matches = [
+        record for record in records
+        if str(record.get("FileType", "")).casefold() == file_type.casefold()
+        and Path(record.get("Input") or record.get("Source") or "").stem.casefold() == stem.casefold()
+    ]
+    if len(matches) > 1:
+        raise WorkspaceError(f"workspace.json 中无法唯一确定 {stem}.{file_type}")
+    return matches[0] if matches else None
 
 
 def _stream_record_order(record: dict) -> tuple[int, int, str]:
@@ -163,7 +174,7 @@ def resolve_model_export_targets(workspace_json: str | Path, model_id: str) -> M
         raise WorkspaceError("当前 minfo 会话缺少模型 ID")
     records = list(document.get("ModelFiles") or [])
     minfo_record = _find_model_record(records, "minfo", model_id)
-    skeleton_record = _find_model_record(records, "skeleton", model_id)
+    skeleton_record = _find_optional_model_record(records, "skeleton", model_id)
     mmesh_records = _find_mmesh_records(records, model_id)
     unpack_root = _asset_path(root, str(document.get("UnpackRoot") or "unpack")).resolve()
     return ModelExportTargets(
@@ -172,7 +183,7 @@ def resolve_model_export_targets(workspace_json: str | Path, model_id: str) -> M
         model_id=model_id,
         template_minfo=_existing_asset_path(root, minfo_record),
         minfo=_unpack_target(root, unpack_root, minfo_record, "minfo"),
-        skeleton=_unpack_target(root, unpack_root, skeleton_record, "skeleton"),
+        skeleton=_unpack_target(root, unpack_root, skeleton_record, "skeleton") if skeleton_record else None,
         mmeshes=tuple(_unpack_target(root, unpack_root, record, "mmesh") for record in mmesh_records),
     )
 
@@ -197,7 +208,8 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
 
     model_id = selected.stem
     minfo = _existing_asset_path(root, minfo_matches[0])
-    skeleton = _existing_asset_path(root, _find_model_record(records, "skeleton", model_id))
+    skeleton_record = _find_optional_model_record(records, "skeleton", model_id)
+    skeleton = _existing_asset_path(root, skeleton_record) if skeleton_record else None
     mmeshes = tuple(_existing_asset_path(root, record) for record in _find_mmesh_records(records, model_id))
     character_id = str(document.get("CharacterId") or model_id)
 
