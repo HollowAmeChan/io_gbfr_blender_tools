@@ -13,6 +13,6 @@
 - “对象”面板只选择或控制当前会话记录的 Armature、主 Mesh 与 Collection。
 - “材质”“Cloth”“SOP 约束”“MOT 动画”都是中控子面板，只解析当前会话。
 
-旧版 Fixes、Utilities、Materials、Advanced 和 Credits 全局面板不再注册。这些面板依赖当前选择对象，无法保证多 minfo 与外部替换集合之间的作用域，因此不再作为 2.0 编辑流程入口。底层操作符暂时保留，供脚本或搜索调用；新 UI 不会自动对会话外对象执行它们。
+旧版 Fixes、Utilities、Materials、Advanced 和 Credits 已汇总为同一 `GBFR` N 栏标签下的顶级“GBFR 实用工具”面板。它不是工作区中控的子面板，内部按骨架、网格、材质 ID、高级和项目链接折叠；骨骼名称可在 GBFR 编号与 Unity/Blender 人形名称之间双向转换，旧的网格清理、拆分/合并、材质 ID 与 minfo Magic 操作也保留。该面板明确作用于 Blender 当前活动对象，方便处理用户自己导入的替换模型；它不会因为中控选中了某个 minfo 会话而自动改动会话对象。
 
 模型导出的可读调试 JSON 保存在工作区 `.gbfr/exports/<模型ID>.json`。三个游戏二进制文件只写入 `unpack`，不会直接写入 `build`；在 GBFR Modtools 预览、刷新并确认后，再由编辑器复制到 `build`。

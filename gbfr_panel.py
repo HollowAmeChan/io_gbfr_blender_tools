@@ -11,6 +11,23 @@ PCOLL = None
 preview_collections = {}
 curr_game_magic = None
 
+
+def _active_armature(context):
+	obj = context.active_object
+	if obj is None:
+		return None
+	if obj.type == 'ARMATURE':
+		return obj
+	armature = obj.find_armature()
+	if armature is not None:
+		return armature
+	parent = obj.parent
+	while parent is not None:
+		if parent.type == 'ARMATURE':
+			return parent
+		parent = parent.parent
+	return None
+
 # Define the panel class
 class GBFRToolPanel_Fixes(bpy.types.Panel):
 	"""Creates a custom panel in the Object properties editor"""
@@ -208,6 +225,93 @@ class GBFRToolPanel_Credits(bpy.types.Panel):
 		row.label(text = "KEEP IT CLEAN!", icon_value=preview_collections["icons"]["KEEPITCLEAN"].icon_id)
 
 
+class GBFRToolPanel_RestoredUtilities(bpy.types.Panel):
+	"""Old editing helpers collected into one top-level, foldable panel."""
+	bl_label = "GBFR 实用工具"
+	bl_idname = "VIEW3D_PT_GBFR_Restored_Utilities"
+	bl_space_type = 'VIEW_3D'
+	bl_region_type = 'UI'
+	bl_category = "GBFR"
+	bl_options = {"DEFAULT_CLOSED"}
+
+	def draw(self, context):
+		layout = self.layout
+		active = context.active_object
+		armature = _active_armature(context)
+		mesh = active if active and active.type == 'MESH' else None
+
+		header, panel = layout.panel("gbfr_utility_armature", default_closed=False)
+		header.label(text="骨架", icon='ARMATURE_DATA')
+		if panel:
+			if armature:
+				panel.label(text=armature.name, icon='BONE_DATA')
+				row = panel.row(align=True)
+				row.operator("armature.translate_bones_to_unity_blender", text="Unity / Blender")
+				row.operator("armature.translate_bones_to_gbfr", text="GBFR")
+			else:
+				panel.label(text="选择骨架，或选择其下的模型。", icon='INFO')
+
+		header, panel = layout.panel("gbfr_utility_mesh", default_closed=False)
+		header.label(text="网格", icon='MESH_DATA')
+		if panel:
+			if mesh:
+				row = panel.row(align=True)
+				row.operator("mesh.split_mesh_along_uvs", text="按 UV 岛拆分", icon='UV')
+				row.operator("mesh.limit_and_normalize_weights", text="限制并归一权重")
+				row = panel.row(align=True)
+				row.operator("mesh.delete_loose_edges_and_verts", text="删除松散几何")
+				row.operator("mesh.select_0_weight_vertices", text="选择零权重")
+				row = panel.row(align=True)
+				row.operator("mesh.separate_by_material", text="按材质拆分")
+				row.operator("mesh.join_all_meshes", text="合并模型网格")
+				row = panel.row(align=True)
+				row.operator("mesh.flip_normals", text="翻转法线")
+				row.operator("mesh.remove_doubles", text="合并重复点")
+			else:
+				panel.label(text="选择要处理的模型网格。", icon='INFO')
+
+		header, panel = layout.panel("gbfr_utility_materials", default_closed=True)
+		header.label(text="材质 ID", icon='MATERIAL')
+		if panel:
+			if mesh:
+				panel.label(text="材质槽 ID 对应 .mmat 索引。", icon='INFO')
+				for slot_index, material in enumerate(mesh.data.materials):
+					if not material:
+						continue
+					row = panel.row(align=True)
+					row.prop(material, "name", text="")
+					if "MaterialID" in material:
+						row.prop(material, '["MaterialID"]', text="ID")
+					else:
+						row.alert = True
+						op = row.operator("material.add_material_index", text="添加 ID")
+						op.material_slot = slot_index
+			else:
+				panel.label(text="选择模型后编辑材质 ID。", icon='INFO')
+
+		header, panel = layout.panel("gbfr_utility_advanced", default_closed=True)
+		header.label(text="高级", icon='PREFERENCES')
+		if panel:
+			if armature:
+				row = panel.row(align=True)
+				row.label(text="minfo Magic")
+				if "Magic" in armature:
+					row.prop(armature, '["Magic"]', text="")
+				else:
+					row.operator("armature.add_magic_number", text="添加")
+				panel.label(text="仅在游戏版本 Magic 变化时手动修改。", icon='INFO')
+			else:
+				panel.label(text="选择骨架后查看 minfo Magic。", icon='INFO')
+
+		header, panel = layout.panel("gbfr_utility_links", default_closed=True)
+		header.label(text="项目链接", icon='URL')
+		if panel:
+			row = panel.row(align=True)
+			row.operator("gbfr.discord", text="Discord")
+			row.operator("gbfr.website", text="文档网站")
+			row.operator("gbfr.github", text="GitHub")
+
+
 
 #=======================
 # Operator Classes
@@ -247,20 +351,17 @@ class ButtonAddMagicNumber(bpy.types.Operator):
 
 	@classmethod
 	def poll(cls, context):
-		return (context.active_object is not None)
+		return _active_armature(context) is not None
 
 	def execute(self, context):
 		try:
-			obj = context.object
-			if obj.type != 'ARMATURE':
-				if obj.parent.type == 'ARMATURE': obj = obj.parent
-			if obj.type == 'ARMATURE':
-				magic = utils_get_magic()
-				obj["Magic"] = magic
-				# Set up property
-				obj.id_properties_ensure() # ensure manager is updated
-				prop_manager = obj.id_properties_ui("Magic")
-				prop_manager.update(min=0, max=100000000, default = magic)
+			obj = _active_armature(context)
+			magic = utils_get_magic()
+			obj["Magic"] = magic
+			# Set up property
+			obj.id_properties_ensure() # ensure manager is updated
+			prop_manager = obj.id_properties_ui("Magic")
+			prop_manager.update(min=0, max=100000000, default = magic)
 		except Exception as err:
 			raise Exception(f"{err}")
 		return {'FINISHED'}
@@ -321,12 +422,11 @@ class ButtonTranslateBonesToUnityBlender(bpy.types.Operator):
 
 	@classmethod
 	def poll(cls, context):
-		return (context.active_object is not None and
-				context.active_object.type == 'ARMATURE')
+		return _active_armature(context) is not None
 
 	def execute(self, context):
 		try:
-			armature = context.active_object
+			armature = _active_armature(context)
 			armature_data = armature.data
 			utils_rename_bones(armature_data, name_to_index = False)
 			self.report({'INFO'}, f"Bone names translated to Unity/Blender Format!")
@@ -345,12 +445,11 @@ class ButtonTranslateBonesToGBFR(bpy.types.Operator):
 
 	@classmethod
 	def poll(cls, context):
-		return (context.active_object is not None and
-				context.active_object.type == 'ARMATURE')
+		return _active_armature(context) is not None
 
 	def execute(self, context):
 		try:
-			armature = context.active_object
+			armature = _active_armature(context)
 			armature_data = armature.data
 			utils_rename_bones(armature_data, name_to_index = True)
 			self.report({'INFO'}, f"Bone names translated to GBFR Format!")
@@ -499,7 +598,8 @@ class ButtonGitHub(bpy.types.Operator):
 	
 
 
-classes = [ButtonSplitMeshAlongUVs, ButtonTranslateBonesToGBFR, ButtonTranslateBonesToUnityBlender,
+classes = [GBFRToolPanel_RestoredUtilities,
+			ButtonSplitMeshAlongUVs, ButtonTranslateBonesToGBFR, ButtonTranslateBonesToUnityBlender,
 			ButtonSeparateByMaterial, ButtonSortMaterials, ButtonJoinAllMeshes, ButtonSelect0WeightVertices, 
 			ButtonLimitAndNormalizeAllWeights, ButtonDeleteLooseGeometry, ButtonAddMaterialIndex, ButtonAddMagicNumber,
 			ButtonDiscord, ButtonWebsite, ButtonGitHub
