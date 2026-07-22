@@ -22,6 +22,8 @@ if "bpy" in locals():
         importlib.reload(gbfr_panel)
     if "utils" in locals():
         importlib.reload(utils)
+    if "bone_name_mappings" in locals():
+        importlib.reload(bone_name_mappings)
     if "gbfr_workspace" in locals():
         importlib.reload(gbfr_workspace)
     if "gbfr_session" in locals():
@@ -53,7 +55,7 @@ import mathutils
 import struct
 import os
 from . import (
-    gbfr_import, gbfr_export, gbfr_panel, utils,
+    gbfr_import, gbfr_export, gbfr_panel, utils, bone_name_mappings,
     gbfr_workspace, gbfr_session, gbfr_workspace_ui,
     gbfr_cloth_format, gbfr_cloth_metadata, gbfr_cloth_blender,
     gbfr_sop, gbfr_sop_blender,

@@ -257,7 +257,12 @@ class GBFRToolPanel_RestoredUtilities(bpy.types.Panel):
 			if mesh:
 				row = panel.row(align=True)
 				row.operator("mesh.split_mesh_along_uvs", text="按 UV 岛拆分", icon='UV')
-				row.operator("mesh.limit_and_normalize_weights", text="限制并归一权重")
+				row.operator("mesh.remove_unused_vertex_groups", text="删除无效顶点组")
+				row = panel.row(align=True)
+				limit4 = row.operator("mesh.limit_and_normalize_weights", text="限制为 4 权重")
+				limit4.limit_number = 4
+				limit8 = row.operator("mesh.limit_and_normalize_weights", text="限制为 8 权重")
+				limit8.limit_number = 8
 				row = panel.row(align=True)
 				row.operator("mesh.delete_loose_edges_and_verts", text="删除松散几何")
 				row.operator("mesh.select_0_weight_vertices", text="选择零权重")
@@ -552,6 +557,7 @@ class ButtonLimitAndNormalizeAllWeights(bpy.types.Operator):
 	bl_label = "Limit & Normalize Weights"
 	bl_options = {'REGISTER', 'UNDO'}
 	bl_description = "Limits the weights of all vertices on the mesh to 4 vertex groups, and normalizes them."
+	limit_number: bpy.props.IntProperty(name="权重上限", default=4, min=1, max=8)
 
 	@classmethod
 	def poll(cls, context):
@@ -561,12 +567,35 @@ class ButtonLimitAndNormalizeAllWeights(bpy.types.Operator):
 	def execute(self, context):
 		try:
 			mesh = context.active_object
-			utils_limit_and_normalize_weights(mesh)
-			self.report({'INFO'}, f"Weights normalized and limited to 4 groups per vetex.")
+			utils_limit_and_normalize_weights(mesh, self.limit_number)
+			self.report({'INFO'}, f"Weights normalized and limited to {self.limit_number} groups per vertex.")
 		except Exception as err:
 			print(f"{err}")
 			raise Exception(f"{err}")
 			pass
+		return {'FINISHED'}
+
+
+class RemoveUnusedVertexGroups(bpy.types.Operator):
+	bl_idname = "mesh.remove_unused_vertex_groups"
+	bl_label = "删除无效顶点组"
+	bl_description = "删除当前模型中没有同名骨骼的顶点组"
+	bl_options = {'REGISTER', 'UNDO'}
+
+	@classmethod
+	def poll(cls, context):
+		return context.active_object is not None and context.active_object.type == 'MESH' and _active_armature(context) is not None
+
+	def execute(self, context):
+		mesh = context.active_object
+		armature = _active_armature(context)
+		bone_names = {bone.name for bone in armature.data.bones}
+		removed = 0
+		for group in reversed(mesh.vertex_groups):
+			if group.name not in bone_names:
+				mesh.vertex_groups.remove(group)
+				removed += 1
+		self.report({'INFO'}, f"Removed {removed} unused vertex groups.")
 		return {'FINISHED'}
 
 class ButtonDiscord(bpy.types.Operator):
@@ -601,7 +630,7 @@ class ButtonGitHub(bpy.types.Operator):
 classes = [GBFRToolPanel_RestoredUtilities,
 			ButtonSplitMeshAlongUVs, ButtonTranslateBonesToGBFR, ButtonTranslateBonesToUnityBlender,
 			ButtonSeparateByMaterial, ButtonSortMaterials, ButtonJoinAllMeshes, ButtonSelect0WeightVertices, 
-			ButtonLimitAndNormalizeAllWeights, ButtonDeleteLooseGeometry, ButtonAddMaterialIndex, ButtonAddMagicNumber,
+			ButtonLimitAndNormalizeAllWeights, RemoveUnusedVertexGroups, ButtonDeleteLooseGeometry, ButtonAddMaterialIndex, ButtonAddMagicNumber,
 			ButtonDiscord, ButtonWebsite, ButtonGitHub
 			]
 

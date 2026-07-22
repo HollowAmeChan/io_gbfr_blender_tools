@@ -41,6 +41,8 @@ def parse_skeleton(filepath, CurCollection):
 			
 			# Set up blender bone
 			edit_bone = armature_obj.data.edit_bones.new(name) # Add bone to armature
+			edit_bone["original_name"] = name
+			edit_bone["gbfr_original_name"] = name
 			edit_bone.use_connect = False # Don't connect to parent
 			edit_bone.use_inherit_rotation = True
 			edit_bone.inherit_scale = 'FULL'

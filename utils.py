@@ -1,6 +1,7 @@
 import bpy
 import urllib
 import difflib # For bone tranlations
+from .bone_name_mappings import BONE_NAME_MAPPINGS
 
 
 def format_exception(exception_string): # raise_noob_readable_exception
@@ -149,6 +150,10 @@ bone_names_mapping = {
 	"_8a1": ["Eye_R", "Eye_Right", "Right Eye", "Pupil_R", "Pupil_Right", "Right Pupil"],
 }
 
+# Preserve the compatibility name imported by Cloth and SOP while keeping the
+# editable mapping in the dedicated upstream v2 module.
+bone_names_mapping.update(BONE_NAME_MAPPINGS)
+
 def utils_rename_bones(armature, name_to_index = False):
 	all_dictionary_names = [] # Put all english translation names into one list
 	[all_dictionary_names.extend(names) for names in bone_names_mapping.values()]
@@ -162,6 +167,14 @@ def utils_rename_bones(armature, name_to_index = False):
 				pass
 		if name_to_index: # Bone Name to Index
 			try: #Rename the bone
+				original_name = bone.get("gbfr_original_name") or bone.get("original_name")
+				if isinstance(original_name, str) and original_name.startswith("_"):
+					bone.name = original_name
+					continue
+				bone_id = bone.get("gbfr_bone_id")
+				if bone_id is not None and int(bone_id) >= 0:
+					bone.name = f"_{int(bone_id):03x}"
+					continue
 				#Get the closest matching bone name
 				name_matches = difflib.get_close_matches(bone.name.lower().replace(' ','_').strip(" _."), all_dictionary_names, 1, 0.8)
 				if len(name_matches) == 0: continue
@@ -273,9 +286,8 @@ def utils_select_0_weight_vertices(mesh):
 
 
 # Limit and Normalize all vertex weights
-def utils_limit_and_normalize_weights(mesh):
-	for vg in mesh.vertex_groups:
-		# limit total weights to 4
-		bpy.ops.object.vertex_group_limit_total(group_select_mode='ALL', limit=4)
-		# normalize all weights
-		bpy.ops.object.vertex_group_normalize_all(group_select_mode='ALL', lock_active=False)
+def utils_limit_and_normalize_weights(mesh, limit_number=4):
+	if not mesh.vertex_groups:
+		return
+	bpy.ops.object.vertex_group_limit_total(group_select_mode='ALL', limit=limit_number)
+	bpy.ops.object.vertex_group_normalize_all(group_select_mode='ALL', lock_active=False)

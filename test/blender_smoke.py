@@ -38,14 +38,20 @@ bone = armature.edit_bones.new("_000")
 bone.head = (0.0, 0.0, 0.0)
 bone.tail = (0.0, 0.0, 1.0)
 bpy.ops.object.mode_set(mode="OBJECT")
+armature.bones["_000"]["gbfr_bone_id"] = 0
+armature.bones["_000"]["gbfr_original_name"] = "_000"
 assert bpy.ops.armature.translate_bones_to_unity_blender() == {"FINISHED"}
 assert armature.bones.get("Hips") is not None
 assert bpy.ops.armature.translate_bones_to_gbfr() == {"FINISHED"}
 assert armature.bones.get("_000") is not None
+from io_gbfr_blender_tools.bone_name_mappings import BONE_NAME_MAPPINGS
+assert BONE_NAME_MAPPINGS["_830"][0] == "Brow_01_L"
 mesh_data = bpy.data.meshes.new("GBFRSmokeMesh")
 mesh_obj = bpy.data.objects.new("GBFRSmokeMesh", mesh_data)
 bpy.context.scene.collection.objects.link(mesh_obj)
 mesh_obj.parent = obj
+mesh_obj.vertex_groups.new(name="_000")
+mesh_obj.vertex_groups.new(name="unused")
 obj.select_set(False)
 mesh_obj.select_set(True)
 bpy.context.view_layer.objects.active = mesh_obj
@@ -53,6 +59,9 @@ assert bpy.ops.armature.translate_bones_to_unity_blender() == {"FINISHED"}
 assert armature.bones.get("Hips") is not None
 assert bpy.ops.armature.translate_bones_to_gbfr() == {"FINISHED"}
 assert armature.bones.get("_000") is not None
+assert bpy.ops.mesh.remove_unused_vertex_groups() == {"FINISHED"}
+assert mesh_obj.vertex_groups.get("_000") is not None
+assert mesh_obj.vertex_groups.get("unused") is None
 assert obj.gbfr_cloth.enabled is False
 assert obj.gbfr_sop.enabled is False
 assert obj.gbfr_animation.enabled is False
