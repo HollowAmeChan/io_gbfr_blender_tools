@@ -10,7 +10,7 @@ from bpy.types import Menu, Operator, Panel
 
 from .gbfr_session import (
     activate_session, active_session_armature, active_session_collection,
-    active_session_mesh, session_collections,
+    active_session_mesh, active_session_meshes, active_session_root, session_collections,
 )
 from .gbfr_workspace import resolve_model_bundle
 
@@ -52,10 +52,19 @@ class GBFR_OT_SelectSessionObject(Operator):
     bl_label = "选择工作区对象"
     bl_options = {"UNDO"}
 
-    target: EnumProperty(items=(("ARMATURE", "骨架", ""), ("MESH", "模型", "")))
+    target: EnumProperty(items=(
+        ("ROOT", "根对象", ""),
+        ("ARMATURE", "骨架", ""),
+        ("MESH", "主模型", ""),
+    ))
 
     def execute(self, context):
-        obj = active_session_armature(context) if self.target == "ARMATURE" else active_session_mesh(context)
+        if self.target == "ROOT":
+            obj = active_session_root(context)
+        elif self.target == "ARMATURE":
+            obj = active_session_armature(context)
+        else:
+            obj = active_session_mesh(context)
         if obj is None:
             return {"CANCELLED"}
         for selected in context.selected_objects:
@@ -78,8 +87,8 @@ class GBFR_OT_RestoreSessionData(Operator):
     def execute(self, context):
         collection = active_session_collection(context)
         armature = active_session_armature(context)
-        mesh = active_session_mesh(context)
-        if collection is None or armature is None or mesh is None:
+        meshes = active_session_meshes(context)
+        if collection is None or armature is None or not meshes:
             return {"CANCELLED"}
         state = collection.gbfr_session
         selected = Path(state.resolved_minfo_path)
@@ -92,7 +101,8 @@ class GBFR_OT_RestoreSessionData(Operator):
             from .gbfr_sop_blender import populate_sop_state
             from .gbfr_animation_blender import populate_animation_state
 
-            apply_workspace_materials(mesh, bundle)
+            for mesh in meshes:
+                apply_workspace_materials(mesh, bundle)
             populate_cloth_state(armature, bundle)
             populate_sop_state(armature, bundle)
             populate_animation_state(armature, bundle)
@@ -187,13 +197,16 @@ class GBFR_PT_SessionObjects(Panel):
     def draw(self, context):
         layout = self.layout
         collection = active_session_collection(context)
+        root = active_session_root(context)
         armature = active_session_armature(context)
-        mesh = active_session_mesh(context)
+        meshes = active_session_meshes(context)
 
         row = layout.row(align=True)
+        root_button = row.operator("gbfr.select_session_object", text=root.name if root else "根对象", icon="OBJECT_ORIGIN")
+        root_button.target = "ROOT"
         armature_button = row.operator("gbfr.select_session_object", text=armature.name if armature else "骨架", icon="ARMATURE_DATA")
         armature_button.target = "ARMATURE"
-        mesh_button = row.operator("gbfr.select_session_object", text=mesh.name if mesh else "模型", icon="MESH_DATA")
+        mesh_button = row.operator("gbfr.select_session_object", text=f"模型 {len(meshes)}", icon="MESH_DATA")
         mesh_button.target = "MESH"
         row.prop(collection, "hide_viewport", text="", icon="HIDE_OFF" if not collection.hide_viewport else "HIDE_ON")
 
@@ -217,19 +230,19 @@ class GBFR_PT_SessionMaterials(Panel):
         return active_session_mesh(context) is not None
 
     def draw(self, context):
-        mesh = active_session_mesh(context)
+        meshes = active_session_meshes(context)
         layout = self.layout
         summary = layout.row(align=True)
-        summary.label(text=f"{len(mesh.data.materials)} 个材质", icon="MATERIAL")
-        missing = int(mesh.get("gbfr_material_missing", 0))
+        material_count = sum(len(mesh.data.materials) for mesh in meshes)
+        summary.label(text=f"{len(meshes)} 个 Mesh / {material_count} 个材质槽", icon="MATERIAL")
+        missing = sum(int(mesh.get("gbfr_material_missing", 0)) for mesh in meshes)
         if missing:
             summary.alert = True
             summary.label(text=f"缺少 {missing}", icon="ERROR")
-        for material in mesh.data.materials:
+        for mesh in meshes:
             row = layout.row(align=True)
-            row.prop(material, "name", text="")
-            if "MaterialID" in material:
-                row.prop(material, '["MaterialID"]', text="ID")
+            row.label(text=f"{mesh.get('gbfr_lod', '?')} / {mesh.name}", icon="MESH_DATA")
+            row.label(text=str(len(mesh.data.materials)))
 
 
 classes = (

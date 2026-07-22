@@ -16,6 +16,8 @@ if "bpy" in locals():
     import importlib
     if "gbfr_import" in locals():
         importlib.reload(gbfr_import)
+    if "gbfr_model_v2" in locals():
+        importlib.reload(gbfr_model_v2)
     if "gbfr_export" in locals():
         importlib.reload(gbfr_export)
     if "gbfr_panel" in locals():
@@ -55,16 +57,13 @@ import mathutils
 import struct
 import os
 from . import (
-    gbfr_import, gbfr_export, gbfr_panel, utils, bone_name_mappings,
+    gbfr_model_v2, gbfr_import, gbfr_export, gbfr_panel, utils, bone_name_mappings,
     gbfr_workspace, gbfr_session, gbfr_workspace_ui,
     gbfr_cloth_format, gbfr_cloth_metadata, gbfr_cloth_blender,
     gbfr_sop, gbfr_sop_blender,
     gbfr_animation, gbfr_animation_blender,
     gbfr_material, gbfr_material_blender,
 )
-from .Entities.ModelInfo import ModelInfo
-# from .Entities.ModelSkeleton import ModelSkeleton
-
 # ImportHelper is a helper class, defines filename and
 # invoke() function which calls the file selector.
 from bpy_extras.io_utils import ImportHelper

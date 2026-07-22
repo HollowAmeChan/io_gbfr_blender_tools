@@ -16,8 +16,9 @@ class GBFRSessionProperties(PropertyGroup):
     workspace_path: StringProperty(name="工作区", subtype="FILE_PATH")
     character_id: StringProperty(name="角色")
     model_id: StringProperty(name="模型")
+    root: PointerProperty(name="模型根对象", type=bpy.types.Object)
     armature: PointerProperty(name="骨架", type=bpy.types.Object)
-    mesh: PointerProperty(name="模型", type=bpy.types.Object)
+    mesh: PointerProperty(name="主模型", type=bpy.types.Object)
     last_status: StringProperty(name="状态")
 
 
@@ -25,7 +26,8 @@ class GBFRSceneWorkspaceProperties(PropertyGroup):
     active_session: PointerProperty(name="当前工作区", type=bpy.types.Collection)
 
 
-def configure_session(collection, bundle, source_minfo_path, armature, mesh, scene=None) -> None:
+def configure_session(collection, bundle, source_minfo_path, root, armature, meshes, scene=None) -> None:
+    meshes = tuple(meshes)
     state = collection.gbfr_session
     state.enabled = True
     state.source_minfo_path = str(Path(source_minfo_path).resolve())
@@ -33,12 +35,13 @@ def configure_session(collection, bundle, source_minfo_path, armature, mesh, sce
     state.workspace_path = str(bundle.workspace_json)
     state.character_id = bundle.character_id
     state.model_id = bundle.model_id
+    state.root = root
     state.armature = armature
-    state.mesh = mesh
+    state.mesh = meshes[0] if meshes else None
     state.last_status = "已导入"
     (scene or bpy.context.scene).gbfr_workspace.active_session = collection
-    armature["gbfr_session_collection"] = collection.name
-    mesh["gbfr_session_collection"] = collection.name
+    for obj in collection.objects:
+        obj["gbfr_session_collection"] = collection.name
 
 
 def session_collections(scene) -> list[bpy.types.Collection]:
@@ -84,6 +87,40 @@ def active_session_armature(context):
     return next((obj for obj in collection.objects if obj.type == "ARMATURE"), None)
 
 
+def active_session_root(context):
+    collection = active_session_collection(context)
+    if collection is None:
+        return None
+    root = collection.gbfr_session.root
+    if root is not None and root.name in collection.objects:
+        return root
+    armature = active_session_armature(context)
+    if armature is not None:
+        return armature
+    return next((obj for obj in collection.objects if obj.parent is None), None)
+
+
+def _mesh_order(obj):
+    lod_name = str(obj.get("gbfr_lod") or (obj.parent.name if obj.parent else "" )).casefold()
+    if lod_name.startswith("shadowlod"):
+        group = 1
+        suffix = lod_name.removeprefix("shadowlod")
+    elif lod_name.startswith("lod"):
+        group = 0
+        suffix = lod_name.removeprefix("lod")
+    else:
+        group = 2
+        suffix = ""
+    return (group, int(suffix) if suffix.isdigit() else 999, obj.name.casefold())
+
+
+def active_session_meshes(context):
+    collection = active_session_collection(context)
+    if collection is None:
+        return ()
+    return tuple(sorted((obj for obj in collection.objects if obj.type == "MESH"), key=_mesh_order))
+
+
 def active_session_mesh(context):
     collection = active_session_collection(context)
     if collection is None:
@@ -91,7 +128,8 @@ def active_session_mesh(context):
     mesh = collection.gbfr_session.mesh
     if mesh is not None and mesh.name in collection.objects and mesh.type == "MESH":
         return mesh
-    return next((obj for obj in collection.objects if obj.type == "MESH"), None)
+    meshes = active_session_meshes(context)
+    return meshes[0] if meshes else None
 
 
 def activate_session(context, collection, select_armature=True) -> None:
@@ -100,16 +138,16 @@ def activate_session(context, collection, select_armature=True) -> None:
     context.scene.gbfr_workspace.active_session = collection
     if not select_armature:
         return
-    armature = collection.gbfr_session.armature
-    if armature is None:
-        armature = next((obj for obj in collection.objects if obj.type == "ARMATURE"), None)
-    if armature is None:
+    target = collection.gbfr_session.root or collection.gbfr_session.armature
+    if target is None:
+        target = next((obj for obj in collection.objects if obj.parent is None), None)
+    if target is None:
         return
     for obj in context.selected_objects:
         obj.select_set(False)
-    armature.hide_set(False)
-    armature.select_set(True)
-    context.view_layer.objects.active = armature
+    target.hide_set(False)
+    target.select_set(True)
+    context.view_layer.objects.active = target
 
 
 classes = (GBFRSessionProperties, GBFRSceneWorkspaceProperties)
