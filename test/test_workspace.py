@@ -60,7 +60,6 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(root / paths["skeleton"], targets.skeleton)
             self.assertEqual(root / paths["mmesh"], targets.mmesh)
             self.assertEqual(tuple(root / paths[name] for name in ("mmesh", "mmesh_lod1", "mmesh_shadow")), targets.mmeshes)
-            self.assertEqual(root / ".gbfr/exports/pl9999.json", targets.debug_json)
 
     def test_rejects_unregistered_minfo(self):
         with tempfile.TemporaryDirectory() as temporary:

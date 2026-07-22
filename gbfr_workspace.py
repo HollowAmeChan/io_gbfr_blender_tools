@@ -52,8 +52,6 @@ class ModelExportTargets:
     minfo: Path
     skeleton: Path
     mmeshes: tuple[Path, ...]
-    debug_json: Path
-    flatc: Path | None
 
     @property
     def mmesh(self) -> Path:
@@ -133,14 +131,6 @@ def _find_data_tools(workspace_root: Path) -> Path | None:
     return None
 
 
-def _find_flatc(workspace_root: Path) -> Path | None:
-    for directory in (workspace_root, *workspace_root.parents):
-        candidate = directory / "_lib" / "tools" / "flatc.exe"
-        if candidate.is_file():
-            return candidate.resolve()
-    return None
-
-
 def _read_workspace(workspace_json: str | Path) -> tuple[Path, Path, dict]:
     workspace_path = Path(workspace_json).expanduser().resolve()
     if not workspace_path.is_file():
@@ -184,8 +174,6 @@ def resolve_model_export_targets(workspace_json: str | Path, model_id: str) -> M
         minfo=_unpack_target(root, unpack_root, minfo_record, "minfo"),
         skeleton=_unpack_target(root, unpack_root, skeleton_record, "skeleton"),
         mmeshes=tuple(_unpack_target(root, unpack_root, record, "mmesh") for record in mmesh_records),
-        debug_json=root / ".gbfr" / "exports" / f"{model_id}.json",
-        flatc=_find_flatc(root),
     )
 
 

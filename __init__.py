@@ -20,6 +20,10 @@ if "bpy" in locals():
         importlib.reload(gbfr_model_v2)
     if "gbfr_export" in locals():
         importlib.reload(gbfr_export)
+    if "gbfr_model_export_v2" in locals():
+        importlib.reload(gbfr_model_export_v2)
+    if "gbfr_minfo_builder" in locals():
+        importlib.reload(gbfr_minfo_builder)
     if "gbfr_panel" in locals():
         importlib.reload(gbfr_panel)
     if "utils" in locals():
@@ -57,7 +61,8 @@ import mathutils
 import struct
 import os
 from . import (
-    gbfr_model_v2, gbfr_import, gbfr_export, gbfr_panel, utils, bone_name_mappings,
+    gbfr_model_v2, gbfr_model_export_v2, gbfr_minfo_builder,
+    gbfr_import, gbfr_export, gbfr_panel, utils, bone_name_mappings,
     gbfr_workspace, gbfr_session, gbfr_workspace_ui,
     gbfr_cloth_format, gbfr_cloth_metadata, gbfr_cloth_blender,
     gbfr_sop, gbfr_sop_blender,
@@ -74,13 +79,6 @@ from bpy.types import Operator
 class AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__
     
-    # Define a custom property for storing the flatc file path
-    flatc_file_path: StringProperty(
-        name="flatc.exe filepath",
-        description="File path to flatc.exe be used for export.",
-        subtype='FILE_PATH',
-    )
-
     gbfr_data_tools_path: StringProperty(
         name="GBFRDataTools.exe filepath",
         description="Optional override used to encode edited cloth XML to BXM",
@@ -89,7 +87,6 @@ class AddonPreferences(bpy.types.AddonPreferences):
     
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "flatc_file_path")
         layout.prop(self, "gbfr_data_tools_path")
 
 

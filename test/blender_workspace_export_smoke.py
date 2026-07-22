@@ -1,7 +1,7 @@
 """Run with: blender --background --python this_file.py -- path/to/model.minfo"""
 
-from pathlib import Path
 import json
+from pathlib import Path
 import shutil
 import sys
 import tempfile
@@ -18,6 +18,7 @@ except (ValueError, IndexError):
 bpy.ops.preferences.addon_enable(module="io_gbfr_blender_tools")
 assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINISHED"}
 
+from io_gbfr_blender_tools.Entities.MInfo_ModelInfo.ModelInfo import ModelInfo
 from io_gbfr_blender_tools.gbfr_session import activate_session, session_collections
 from io_gbfr_blender_tools.gbfr_workspace import resolve_model_bundle
 
@@ -31,30 +32,28 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
     root = Path(temporary)
     model_id = bundle.model_id
     model_type = model_id[:2]
-    relative = {
-        "minfo": Path(f"data/model/{model_type}/{model_id}/{model_id}.minfo"),
-        "skeleton": Path(f"data/model/{model_type}/{model_id}/{model_id}.skeleton"),
-        "mmesh": Path(f"data/model_streaming/lod0/{model_id}.mmesh"),
-    }
-    source_files = {
-        "minfo": bundle.minfo,
-        "skeleton": bundle.skeleton,
-        "mmesh": bundle.mmesh,
-    }
+    files = [
+        ("minfo", bundle.minfo, Path(f"data/model/{model_type}/{model_id}/{model_id}.minfo")),
+        ("skeleton", bundle.skeleton, Path(f"data/model/{model_type}/{model_id}/{model_id}.skeleton")),
+    ]
+    for mmesh in bundle.mmeshes:
+        files.append(("mmesh", mmesh, Path(f"data/model_streaming/{mmesh.parent.name}/{model_id}.mmesh")))
+
     records = []
-    for file_type, relative_path in relative.items():
+    for file_type, source_file, relative_path in files:
         source = root / "source" / relative_path
         unpack = root / "unpack" / relative_path
         source.parent.mkdir(parents=True, exist_ok=True)
         unpack.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_files[file_type], source)
-        shutil.copy2(source_files[file_type], unpack)
+        shutil.copy2(source_file, source)
+        shutil.copy2(source_file, unpack)
         records.append({
             "FileType": file_type,
-            "Source": str(source.relative_to(root)),
-            "Input": str(unpack.relative_to(root)),
-            "Output": str(Path("build") / relative_path),
+            "Source": source.relative_to(root).as_posix(),
+            "Input": unpack.relative_to(root).as_posix(),
+            "Output": (Path("build") / relative_path).as_posix(),
         })
+
     workspace_path = root / "workspace.json"
     workspace_path.write_text(json.dumps({
         "Version": 1,
@@ -65,13 +64,21 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
 
     result = bpy.ops.gbfr.export_mesh(filepath=str(workspace_path), export_scale=1.0)
     assert result == {"FINISHED"}, (result, session.gbfr_session.last_status)
-    for relative_path in relative.values():
-        output = root / "unpack" / relative_path
-        assert output.is_file() and output.stat().st_size > 0, output
-    debug_json = root / ".gbfr" / "exports" / f"{model_id}.json"
-    document = json.loads(debug_json.read_text(encoding="utf-8"))
-    assert document["lods"][0]["vertex_count"] > 0
-    assert Path(session.gbfr_session.workspace_path) == workspace_path
-    assert Path(session.gbfr_session.resolved_minfo_path) == root / "unpack" / relative["minfo"]
+    outputs = [root / "unpack" / relative_path for _kind, _source, relative_path in files]
+    assert all(path.is_file() and path.stat().st_size > 0 for path in outputs), outputs
 
-print(f"GBFR workspace export smoke passed: {bundle.model_id}")
+    minfo_output = root / "unpack" / files[0][2]
+    model_info = ModelInfo.GetRootAs(bytearray(minfo_output.read_bytes()), 0)
+    regular_lods = [path for path in outputs if path.suffix == ".mmesh" and path.parent.name.startswith("lod")]
+    shadow_lods = [path for path in outputs if path.suffix == ".mmesh" and path.parent.name.startswith("shadowlod")]
+    assert model_info.LodsLength() == len(regular_lods)
+    assert model_info.ShadowLodsLength() == len(shadow_lods)
+    for index, output in enumerate(sorted(regular_lods, key=lambda path: path.parent.name)):
+        lod = model_info.Lods(index)
+        final_buffer = lod.Buffers(lod.BuffersLength() - 1)
+        assert output.stat().st_size == final_buffer.Offset() + final_buffer.Size()
+
+    assert Path(session.gbfr_session.workspace_path) == workspace_path
+    assert Path(session.gbfr_session.resolved_minfo_path) == minfo_output
+
+print(f"GBFR v2 workspace export smoke passed: {bundle.model_id} ({len(bundle.mmeshes)} LOD files)")

@@ -4,7 +4,7 @@
 
 导入时会自动解析：
 
-- `ModelFiles` 中同模型 ID 的 `.minfo`、`.skeleton` 和 `model_streaming/lod0/*.mmesh`；
+- `ModelFiles` 中同模型 ID 的 `.minfo`、`.skeleton` 和全部已登记的 `model_streaming/lod#`/`shadowlod#` `.mmesh`；导入层级为模型根对象、LOD 空对象、该 LOD 的一个或多个 Mesh；
 - `ClothFiles` 中全部基础 `*_clp.bxm.xml` 与 `*_clh.bxm.xml`；
 - 工作区上级 `_lib/tools/GBFRDataTools/GBFRDataTools.exe`。
 
