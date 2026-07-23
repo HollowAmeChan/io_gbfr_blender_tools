@@ -16,3 +16,19 @@
 旧版 Fixes、Utilities、Materials、Advanced 和 Credits 已汇总为同一 `GBFR` N 栏标签下的顶级“GBFR 实用工具”面板。它不是工作区中控的子面板，内部按骨架、网格、材质 ID、高级和项目链接折叠；骨骼名称可在 GBFR 编号与 Unity/Blender 人形名称之间双向转换，旧的网格清理、拆分/合并、材质 ID 与 minfo Magic 操作也保留。该面板明确作用于 Blender 当前活动对象，方便处理用户自己导入的替换模型；它不会因为中控选中了某个 minfo 会话而自动改动会话对象。
 
 模型导出只写入工作区中已登记的 `unpack` 二进制，不会直接写入 `build`。在 GBFR Modtools 预览、刷新并确认后，再由编辑器复制到 `build`。`flatc.exe` 不再参与模型导出；它仍可能被 Modtools 的其他格式工具使用。
+
+## 融合骨架与稳定索引
+
+Blender 的 `Armature.data.bones` 顺序不是可靠的游戏骨骼索引。即使融合工具只是使用 `edit_bones.new()` 添加骨骼，新骨挂到已有父骨并退出编辑模式后，Blender 也可能按层级把新骨插入旧骨序列中间。父子关系仍然正确，但如果直接按该集合顺序写 `.skeleton`，原来的 cloth、SOP、动作和顶点权重会指向错误骨骼，游戏可能在载入模型时崩溃。
+
+工作区导出不再依赖 Blender 的内部顺序。存在 source `.skeleton` 时，导出器按导出骨名匹配并建立一张稳定索引表：
+
+1. source 中的全部原骨骼保持原索引和原顺序。
+2. 融合后新增的骨骼统一追加到 source 骨骼之后。
+3. `.skeleton` 的 `ParentId`、`.minfo` 的 deform bone 表和 `.mmesh` 权重索引共同使用这张表。
+
+父子关系通过重新计算的 `ParentId` 保持，不要求父子骨在 Blender 列表中相邻。当前回归样本已验证：342 根原骨融合为 838 根后，原骨名称和父索引逐项不变，新增骨从索引 342 开始输出。
+
+这项处理属于 GBFR 导出契约，不要求通用骨架融合工具写入 GBFR 自定义属性。已经融合好的 `.blend` 也可直接根据工作区 source skeleton 恢复导出顺序。前提是原骨骼没有被删除、重命名或改变父级；缺少源骨、出现重复导出骨名或修改原父级时，导出器会拒绝生成不一致的文件。
+
+重新导出后必须把同一次生成的 `.minfo`、`.skeleton` 和全部 `.mmesh` 一起构建、投放。只替换 `data/model_streaming` 中的 `.mmesh`，让它搭配游戏原版 `.minfo/.skeleton`，会造成权重表和骨骼索引契约不一致。

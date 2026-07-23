@@ -146,7 +146,8 @@ def _validate_skeleton_contract(root, reference_path):
         raise RuntimeError("源资源包含 skeleton，但当前导出根对象不是骨架")
 
     reference = ModelSkeleton.GetRootAs(bytearray(Path(reference_path).read_bytes()), 0)
-    current_bones = root.data.bones
+    current_bones = gbfr_model_export_v2.ordered_export_bones(root, reference)
+    current_index_by_name = {bone.name: index for index, bone in enumerate(current_bones)}
     problems = []
     if len(current_bones) < reference.BodyLength():
         problems.append(f"骨骼数量 {len(current_bones)} 少于源骨架 {reference.BodyLength()}")
@@ -156,7 +157,7 @@ def _validate_skeleton_contract(root, reference_path):
         source_name = source_bone.Name().decode("utf-8")
         current_bone = current_bones[index]
         current_name = gbfr_model_export_v2.export_bone_name(current_bone)
-        current_parent = current_bones.find(current_bone.parent.name) if current_bone.parent else 65535
+        current_parent = current_index_by_name[current_bone.parent.name] if current_bone.parent else 65535
         if current_name != source_name:
             problems.append(f"索引 {index}: 源骨骼 {source_name}，当前为 {current_name}")
         if current_parent != source_bone.ParentId():
@@ -228,6 +229,8 @@ class ExportSomeData(Operator, ImportHelper):
                 continue
             box.label(text=str(target.relative_to(targets.workspace_root)), icon="FILE")
         box.label(text="不会写入 build；minfo 由 v2 构建器直接生成", icon="INFO")
+        if targets.reference_skeleton is not None:
+            box.label(text="源骨骼索引保持不变；融合新增骨骼统一追加到末尾", icon="LOCKED")
         if self.fill_missing_lods:
             box.label(text="缺失的低精度 LOD 将在导出时使用 LOD0", icon="DUPLICATE")
 
@@ -265,6 +268,7 @@ class ExportSomeData(Operator, ImportHelper):
                     str(staging_root / f"{targets.model_id}.minfo"),
                     self.export_scale,
                     True,
+                    reference_skeleton_path=targets.reference_skeleton,
                 )
                 _install_workspace_export(staging_root, targets)
 

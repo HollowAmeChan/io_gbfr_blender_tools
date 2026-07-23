@@ -19,6 +19,7 @@ bpy.ops.preferences.addon_enable(module="io_gbfr_blender_tools")
 assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINISHED"}
 
 from io_gbfr_blender_tools.Entities.MInfo_ModelInfo.ModelInfo import ModelInfo
+from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
 from io_gbfr_blender_tools.gbfr_session import activate_session, session_collections
 from io_gbfr_blender_tools.gbfr_workspace import resolve_model_bundle
 
@@ -30,6 +31,17 @@ temporary_parent.mkdir(parents=True, exist_ok=True)
 
 # Typical mod workflow only edits LOD0. Lower regular LODs are intentionally removed.
 session_root = session.gbfr_session.root
+source_skeleton = ModelSkeleton.GetRootAs(bytearray(bundle.skeleton.read_bytes()), 0)
+original_bone_count = source_skeleton.BodyLength()
+bpy.context.view_layer.objects.active = session_root
+bpy.ops.object.mode_set(mode="EDIT")
+extra_bone = session_root.data.edit_bones.new("GBFR_ORDER_TEST_EXTRA")
+extra_bone.head = (0.0, 0.0, 0.0)
+extra_bone.tail = (0.0, 0.05, 0.0)
+extra_bone.parent = session_root.data.edit_bones[6]
+extra_bone_name = extra_bone.name
+bpy.ops.object.mode_set(mode="OBJECT")
+assert session_root.data.bones.find(extra_bone_name) < original_bone_count
 removed_regular_lods = []
 for lod_object in list(session_root.children):
     name = lod_object.name.casefold()
@@ -82,6 +94,16 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
 
     minfo_output = root / "unpack" / files[0][2]
     model_info = ModelInfo.GetRootAs(bytearray(minfo_output.read_bytes()), 0)
+    skeleton_output = root / "unpack" / files[1][2]
+    exported_skeleton = ModelSkeleton.GetRootAs(bytearray(skeleton_output.read_bytes()), 0)
+    assert exported_skeleton.BodyLength() == original_bone_count + 1
+    for index in range(original_bone_count):
+        source_bone = source_skeleton.Body(index)
+        exported_bone = exported_skeleton.Body(index)
+        assert exported_bone.Name() == source_bone.Name(), index
+        assert exported_bone.ParentId() == source_bone.ParentId(), index
+    assert exported_skeleton.Body(original_bone_count).Name() == b"GBFR_ORDER_TEST_EXTRA"
+    assert exported_skeleton.Body(original_bone_count).ParentId() == 6
     regular_lods = [path for path in outputs if path.suffix == ".mmesh" and path.parent.name.startswith("lod")]
     shadow_lods = [path for path in outputs if path.suffix == ".mmesh" and path.parent.name.startswith("shadowlod")]
     assert model_info.LodsLength() == len(regular_lods)

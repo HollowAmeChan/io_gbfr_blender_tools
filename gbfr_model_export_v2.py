@@ -64,17 +64,69 @@ def export_bone_name(bone):
 	return export_name
 
 
-def build_skeleton(armature_obj, deform_joints_table=None):
-	DeformJointsTable = list(deform_joints_table) if deform_joints_table is not None else list(range(len(armature_obj.data.bones)))
+def ordered_export_bones(armature_obj, reference_skeleton=None):
+	"""Return a stable binary order without rebuilding Blender's armature."""
+	native_bones = list(armature_obj.data.bones)
+	if reference_skeleton is not None:
+		bones_by_export_name = {}
+		for bone in native_bones:
+			export_name = export_bone_name(bone)
+			if export_name in bones_by_export_name:
+				raise RuntimeError(f"导出骨骼名重复，无法保持索引: {export_name}")
+			bones_by_export_name[export_name] = bone
+
+		ordered = []
+		missing = []
+		for index in range(reference_skeleton.BodyLength()):
+			reference_name = reference_skeleton.Body(index).Name().decode("utf-8")
+			bone = bones_by_export_name.get(reference_name)
+			if bone is None:
+				missing.append(reference_name)
+			else:
+				ordered.append(bone)
+		if missing:
+			detail = ", ".join(missing[:8])
+			raise RuntimeError(f"缺少源骨骼，无法保持 skeleton 索引: {detail}")
+
+		original_names = {bone.name for bone in ordered}
+		ordered.extend(bone for bone in native_bones if bone.name not in original_names)
+		return ordered
+
+	indexed = []
+	extras = []
+	seen_indices = set()
+	for native_index, bone in enumerate(native_bones):
+		stored_index = bone.get("gbfr_original_index")
+		if stored_index is None:
+			extras.append((native_index, bone))
+			continue
+		try:
+			stored_index = int(stored_index)
+		except (TypeError, ValueError):
+			raise RuntimeError(f"骨骼 {bone.name} 的 gbfr_original_index 无效")
+		if stored_index < 0 or stored_index in seen_indices:
+			raise RuntimeError(f"骨骼 {bone.name} 的 gbfr_original_index 重复或无效: {stored_index}")
+		seen_indices.add(stored_index)
+		indexed.append((stored_index, bone))
+	if not indexed:
+		return native_bones
+	indexed.sort(key=lambda item: item[0])
+	return [bone for _index, bone in indexed] + [bone for _index, bone in extras]
+
+
+def build_skeleton(armature_obj, deform_joints_table=None, export_bones=None):
+	export_bones = list(export_bones) if export_bones is not None else ordered_export_bones(armature_obj)
+	bone_index_by_name = {bone.name: index for index, bone in enumerate(export_bones)}
+	DeformJointsTable = list(deform_joints_table) if deform_joints_table is not None else list(range(len(export_bones)))
 	BoneInfoTablesList = []
 	
 	skeleton_builder = Builder(0)
-	for n, bone in enumerate(armature_obj.data.bones):
+	for n, bone in enumerate(export_bones):
 		parent = bone.parent
 		if parent is None:
 			parent = 65535
 		else:
-			parent = armature_obj.pose.bones.find(parent.name)
+			parent = bone_index_by_name[parent.name]
 		export_name = export_bone_name(bone)
 		name = skeleton_builder.CreateString(export_name)
 		bone_matrix = bone.matrix_local
@@ -90,7 +142,7 @@ def build_skeleton(armature_obj, deform_joints_table=None):
 						if bone.name in bone_collection.bones:
 							a1  = CreateBoneInfo(skeleton_builder, n, int(bone_collection.name))
 				else: # Blender 3
-					pbone = armature_obj.pose.bones[n]
+					pbone = armature_obj.pose.bones.get(bone.name)
 					if pbone.bone_group:
 						bone_group = pbone.bone_group
 						a1  = CreateBoneInfo(skeleton_builder, n, int(bone_group.name))
@@ -162,7 +214,7 @@ def build_mesh_vert_dictionary(mesh_data):
 # =======================================================================================================================
 # MAIN EXPORT FUNCTION
 # =======================================================================================================================
-def write_some_data(context, filepath, export_scale:float, create_model_subfolders:bool):
+def write_some_data(context, filepath, export_scale:float, create_model_subfolders:bool, reference_skeleton_path=None):
 	total_export_timer_start = time.perf_counter()
 	export_section_timer_start = time.perf_counter() # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 	
@@ -263,10 +315,16 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 	# ================================================
 	deform_bones_table = []
 	if armature_obj:
-		bone_name_to_index_dict = {bone.name: i for i, bone in enumerate(armature_obj.data.bones)}
+		reference_skeleton = None
+		if reference_skeleton_path:
+			with open(reference_skeleton_path, "rb") as reference_file:
+				reference_buffer = bytearray(reference_file.read())
+			reference_skeleton = ModelSkeleton.GetRootAs(reference_buffer, 0)
+		export_bones = ordered_export_bones(armature_obj, reference_skeleton)
+		bone_name_to_index_dict = {bone.name: i for i, bone in enumerate(export_bones)}
 		# The game keeps skeleton bone 0 as the deform root even when no vertex
 		# is directly weighted to it.
-		used_bone_indices = {0} if armature_obj.data.bones else set()
+		used_bone_indices = {0} if export_bones else set()
 		for mesh_obj in mesh_objects:
 			for vertex in mesh_obj.data.vertices:
 				for influence in vertex.groups:
@@ -306,7 +364,7 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 
 		# Save skeleton_buffer output to .skeleton file
 		# ================================================
-		skeleton_buffer, deform_bones_table = build_skeleton(armature_obj, deform_bones_table)
+		skeleton_buffer, deform_bones_table = build_skeleton(armature_obj, deform_bones_table, export_bones)
 		try:
 			# skeleton_file = open(os.path.splitext(filepath)[0] + ".skeleton", 'wb')
 			skeleton_file = open(os.path.join(model_path, model_name + ".skeleton"), 'wb')

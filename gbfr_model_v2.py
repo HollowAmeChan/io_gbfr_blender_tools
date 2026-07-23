@@ -57,6 +57,7 @@ def build_skeleton(skeleton:ModelSkeleton, collection, bone_scale_multiplier = 1
 		edit_bone.tail = (0, 0.05 * bone_scale_multiplier, 0)
 		edit_bone['original_name'] = name
 		edit_bone['gbfr_original_name'] = name
+		edit_bone['gbfr_original_index'] = n
 		
 		if parent_index != 65535: # Parent the bone to its parent if it has a parent
 			edit_bone.parent = armature_obj.data.edit_bones[parent_index]
