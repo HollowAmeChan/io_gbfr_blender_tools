@@ -247,6 +247,8 @@ class GBFRClothStateProperties(PropertyGroup):
         items=(
             ("CLP_MASK", "当前 CLP 使用层", "按 useCollisionFlags_ 显示"),
             ("ACTIVE", "当前 CLH 层", "只显示当前选择的 CLH"),
+            ("ACTIVE_COLLISION", "当前 CLH 碰撞体", "只显示当前 CLH 列表中选择的碰撞体"),
+            ("ACTIVE_BONE", "当前骨", "显示所有 CLH 层中涉及当前活动骨骼的碰撞体"),
             ("ALL", "全部 CLH", "显示全部碰撞层"),
         ),
     )
@@ -618,6 +620,13 @@ class GBFR_PT_ClothEditor(Panel):
         view.prop(state, "preview_all_clp", text="全部 CLP")
         view.prop(state, "draw_in_front", text="置前")
         layout.prop(state, "collision_layer_mode", text="碰撞范围")
+        if state.collision_layer_mode == "ACTIVE_BONE":
+            bone = armature.data.bones.active
+            bone_id = _bone_id(bone) if bone else None
+            if bone_id is None:
+                layout.label(text="请先在骨架上选择一个骨骼", icon="INFO")
+            else:
+                layout.label(text=f"过滤骨骼: {_bone_display(armature, bone_id)}", icon="BONE_DATA")
 
 
 def _draw_clp_group_editor(layout, armature, state, group):
@@ -834,12 +843,47 @@ def _visible_clp(state):
 def _visible_clh(state, clp_groups):
     if state.collision_layer_mode == "ALL":
         return list(state.clh_layers)
-    if state.collision_layer_mode == "ACTIVE":
+    if state.collision_layer_mode in {"ACTIVE", "ACTIVE_COLLISION"}:
         return [state.clh_layers[state.active_clh_index]] if state.clh_layers else []
+    if state.collision_layer_mode == "ACTIVE_BONE":
+        return list(state.clh_layers)
     mask = 0
     for group in clp_groups:
         mask |= int(getattr(group, _header_attr("useCollisionFlags_")))
     return [layer for layer in state.clh_layers if 0 <= layer.group_id < 31 and mask & (1 << layer.group_id)]
+
+
+def _collision_draw_ids(state, layer, active_bone_id=None):
+    values = {value.collision_id: value for value in layer.collisions}
+    if state.collision_layer_mode == "ACTIVE_COLLISION":
+        if not layer.collisions:
+            return set(), set()
+        index = min(max(0, layer.active_collision_index), len(layer.collisions) - 1)
+        shape_ids = {layer.collisions[index].collision_id}
+    elif state.collision_layer_mode == "ACTIVE_BONE":
+        if active_bone_id is None:
+            return set(), set()
+        direct_ids = {
+            value.collision_id
+            for value in layer.collisions
+            if active_bone_id in {value.p1, value.p2}
+        }
+        shape_ids = set(direct_ids)
+        shape_ids.update(
+            value.collision_id
+            for value in layer.collisions
+            if value.capsule in direct_ids
+        )
+    else:
+        shape_ids = set(values)
+
+    point_ids = set(shape_ids)
+    point_ids.update(
+        values[collision_id].capsule
+        for collision_id in shape_ids
+        if collision_id in values and values[collision_id].capsule in values
+    )
+    return point_ids, shape_ids
 
 
 def _draw_armature(armature, batches):
@@ -862,9 +906,10 @@ def _draw_armature(armature, batches):
         batches.extend(((longitudinal, (0.25, 0.95, 0.45, 0.95), 2.0), (lateral, (0.95, 0.35, 0.85, 0.95), 2.0), (fixed, (1.0, 0.55, 0.15, 0.95), 2.4), (points, (1.0, 0.9, 0.25, 0.95), 1.2)))
     if state.show_collisions:
         collision_lines, points = [], []
+        active_bone = armature.data.bones.active
+        active_bone_id = _bone_id(active_bone) if active_bone else None
         for layer in _visible_clh(state, groups):
             endpoints = {}
-            values = {value.collision_id: value for value in layer.collisions}
             for value in layer.collisions:
                 first = _bone_point(armature, mapping, value.p1, value.offset1)
                 second = _bone_point(armature, mapping, value.p2, value.offset2)
@@ -872,10 +917,18 @@ def _draw_armature(armature, batches):
                     continue
                 center = first.lerp(second, value.weight)
                 endpoints[value.collision_id] = (center, value.radius)
-                _append_sphere(collision_lines, center, value.radius)
+            point_ids, shape_ids = _collision_draw_ids(state, layer, active_bone_id)
+            for collision_id in point_ids:
+                endpoint = endpoints.get(collision_id)
+                if endpoint is None:
+                    continue
+                center, radius = endpoint
+                _append_sphere(collision_lines, center, radius)
                 if state.show_points:
-                    _append_cross(points, center, max(value.radius * 0.2, 0.003))
+                    _append_cross(points, center, max(radius * 0.2, 0.003))
             for value in layer.collisions:
+                if value.collision_id not in shape_ids:
+                    continue
                 current = endpoints.get(value.collision_id)
                 linked = endpoints.get(value.capsule)
                 if current and linked:

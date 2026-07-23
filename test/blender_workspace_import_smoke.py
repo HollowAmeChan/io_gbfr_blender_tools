@@ -89,25 +89,55 @@ bpy.ops.gbfr.toggle_collision_layer(layer_id=layer_id)
 assert getattr(state.clp_groups[state.active_clp_index], mask_attr) == old_mask
 from io_gbfr_blender_tools.gbfr_cloth_blender import GBFRClpGroupProperties
 assert GBFRClpGroupProperties.bl_rna.properties["header_airResistance"].name == "空气阻力"
+from io_gbfr_blender_tools.gbfr_cloth_blender import _collision_draw_ids
+state.active_clh_index = next(index for index, layer in enumerate(state.clh_layers) if layer.collisions)
+preview_layer = state.clh_layers[state.active_clh_index]
+preview_layer.active_collision_index = next(
+    (index for index, value in enumerate(preview_layer.collisions) if value.capsule >= 0),
+    0,
+)
+selected_collision = preview_layer.collisions[preview_layer.active_collision_index]
+state.collision_layer_mode = "ACTIVE_COLLISION"
+point_ids, shape_ids = _collision_draw_ids(state, preview_layer)
+assert shape_ids == {selected_collision.collision_id}
+assert selected_collision.collision_id in point_ids
+if selected_collision.capsule >= 0:
+    assert selected_collision.capsule in point_ids
+
+active_bone_id = selected_collision.p1
+state.collision_layer_mode = "ACTIVE_BONE"
+point_ids, shape_ids = _collision_draw_ids(state, preview_layer, active_bone_id)
+assert selected_collision.collision_id in shape_ids
+for collision_id in shape_ids:
+    value = next(item for item in preview_layer.collisions if item.collision_id == collision_id)
+    linked = next((item for item in preview_layer.collisions if item.collision_id == value.capsule), None)
+    assert active_bone_id in {value.p1, value.p2} or (
+        linked is not None and active_bone_id in {linked.p1, linked.p2}
+    )
 meshes = [
     obj for obj in bpy.context.scene.objects
     if obj.type == "MESH" and "gbfr_material_json" in obj
 ]
-assert len(meshes) == 1, len(meshes)
-mesh = meshes[0]
-assert mesh["gbfr_material_applied"] > 0
-assert mesh["gbfr_material_missing"] == 0
-assert Path(mesh["gbfr_material_json"]).name == "0.mmat.json"
-for material in mesh.data.materials:
-    node_types = {node.bl_idname for node in material.node_tree.nodes}
-    assert {"ShaderNodeTexImage", "ShaderNodeEmission", "ShaderNodeBsdfTransparent", "ShaderNodeMixShader"} <= node_types
-    assert material.surface_render_method == "BLENDED"
-    texture_path = material.get("gbfr_albedo_dds") or material.get("gbfr_eye_conjunctiva_dds")
-    assert texture_path and Path(texture_path).suffix.casefold() == ".dds"
+assert meshes
+for mesh in meshes:
+    assert mesh["gbfr_material_applied"] > 0
+    assert mesh["gbfr_material_missing"] == 0
+    assert Path(mesh["gbfr_material_json"]).name == "0.mmat.json"
+    for material in mesh.data.materials:
+        node_types = {node.bl_idname for node in material.node_tree.nodes}
+        assert {"ShaderNodeTexImage", "ShaderNodeEmission", "ShaderNodeBsdfTransparent", "ShaderNodeMixShader"} <= node_types
+        assert material.surface_render_method == "BLENDED"
+        texture_path = material.get("gbfr_albedo_dds") or material.get("gbfr_eye_conjunctiva_dds")
+        assert texture_path and Path(texture_path).suffix.casefold() == ".dds"
 from io_gbfr_blender_tools import gbfr_cloth_blender
-batches = []
-gbfr_cloth_blender._draw_armature(armatures[0], batches)
-assert sum(len(lines) for lines, _color, _width in batches) > 0
+state.show_topology = False
+armatures[0].data.bones.active = armatures[0].data.bones[bone_by_id[active_bone_id]]
+for mode in ("ACTIVE_COLLISION", "ACTIVE_BONE"):
+    state.collision_layer_mode = mode
+    batches = []
+    gbfr_cloth_blender._draw_armature(armatures[0], batches)
+    assert sum(len(lines) for lines, _color, _width in batches) > 0, mode
+state.show_topology = True
 sop = armatures[0].gbfr_sop
 assert sop.enabled
 assert len(sop.operations) == 101
