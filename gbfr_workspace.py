@@ -27,6 +27,8 @@ class ModelBundle:
     workspace_root: Path
     character_id: str
     model_id: str
+    prefer_source: bool
+    texture_roots: tuple[Path, ...]
     minfo: Path
     skeleton: Path | None
     mmeshes: tuple[Path, ...]
@@ -226,6 +228,11 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         for record in _find_mmesh_records(records, model_id)
     )
     character_id = str(document.get("CharacterId") or model_id)
+    source_root = _asset_path(root, str(document.get("SourceRoot") or "source"))
+    unpack_root = _asset_path(root, str(document.get("UnpackRoot") or "unpack"))
+    preferred_root, fallback_root = (
+        (source_root, unpack_root) if prefer_source else (unpack_root, source_root)
+    )
 
     material_candidates = []
     material_root = root / ("source" if prefer_source else "unpack") / "data" / "model" / model_id[:2] / model_id / "vars"
@@ -239,19 +246,26 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         None,
     )
     sop_candidates = []
-    if sop_report and sop_report.get("Source"):
-        sop_candidates.append(_asset_path(root, sop_report["Source"]))
-    for key in ("Source", "Input"):
+    if sop_report:
+        for key in (("Source", "Input") if prefer_source else ("Input", "Source")):
+            value = sop_report.get(key)
+            if value:
+                sop_candidates.append(_asset_path(root, value))
+    for key in (("Source", "Input") if prefer_source else ("Input", "Source")):
         value = minfo_matches[0].get(key)
         if value:
             sop_candidates.append(_asset_path(root, value).with_suffix(".sop"))
     sop = next((path.resolve() for path in sop_candidates if path.is_file()), None)
-    source_root = _asset_path(root, str(document.get("SourceRoot") or "source"))
-    animation_root = source_root / "data" / model_id[:2] / model_id
-    animations = tuple(sorted(
-        (path.resolve() for path in animation_root.glob("*.mot") if path.is_file()),
-        key=lambda path: path.name.casefold(),
-    )) if animation_root.is_dir() else ()
+    animation_paths = {}
+    for animation_root in (
+        preferred_root / "data" / model_id[:2] / model_id,
+        fallback_root / "data" / model_id[:2] / model_id,
+    ):
+        if animation_root.is_dir():
+            for path in animation_root.glob("*.mot"):
+                if path.is_file():
+                    animation_paths.setdefault(path.name.casefold(), path.resolve())
+    animations = tuple(sorted(animation_paths.values(), key=lambda path: path.name.casefold()))
 
     cloth_files = []
     for record in document.get("ClothFiles") or []:
@@ -277,6 +291,8 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         workspace_root=root,
         character_id=character_id,
         model_id=model_id,
+        prefer_source=prefer_source,
+        texture_roots=(preferred_root.resolve(), fallback_root.resolve()),
         minfo=minfo,
         skeleton=skeleton,
         mmeshes=mmeshes,

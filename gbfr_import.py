@@ -76,6 +76,42 @@ class ImportSomeData(Operator, ImportHelper):
     import_scale: FloatProperty(name="模型缩放", default=1.0)
     bone_scale: FloatProperty(name="骨骼显示长度", default=1.0, min=0.01)
 
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "import_scale")
+        layout.prop(self, "bone_scale")
+        if not self.filepath:
+            return
+        try:
+            bundle = resolve_model_bundle(self.filepath)
+        except Exception as error:
+            box = layout.box()
+            box.alert = True
+            box.label(text=str(error), icon="ERROR")
+            return
+
+        def label_path(path):
+            try:
+                return str(Path(path).resolve().relative_to(bundle.workspace_root))
+            except ValueError:
+                return str(path)
+
+        box = layout.box()
+        box.label(text=f"解析来源: {'source' if bundle.prefer_source else 'unpack'}", icon="FILE_REFRESH")
+        box.label(text=f"minfo: {label_path(bundle.minfo)}", icon="FILE_3D")
+        if bundle.skeleton:
+            box.label(text=f"skeleton: {label_path(bundle.skeleton)}", icon="ARMATURE_DATA")
+        box.label(text=f"mmesh: {len(bundle.mmeshes)} 个 LOD，LOD0 = {label_path(bundle.mmesh)}", icon="MESH_DATA")
+        if bundle.material_json:
+            box.label(text=f"材质定义: {label_path(bundle.material_json)}", icon="MATERIAL")
+        for index, root in enumerate(bundle.texture_roots):
+            box.label(text=f"贴图搜索 {index + 1}: {label_path(root / 'data')}", icon="TEXTURE")
+        box.label(text=f"SOP: {label_path(bundle.sop) if bundle.sop else '未找到'}", icon="CONSTRAINT")
+        box.label(text=f"cloth XML: {len(bundle.cloth_files)} 个（unpack 中间态）", icon="MOD_CLOTH")
+        for cloth in bundle.cloth_files:
+            box.label(text=f"  {cloth.category}/{cloth.group_id}: {label_path(cloth.xml)}", icon="MOD_CLOTH")
+        box.label(text=f"MOT: {len(bundle.animations)} 个（优先当前来源，缺失时回退）", icon="ANIM_DATA")
+
     def execute(self, context):
         try:
             return read_some_data(context, self.filepath, self.import_scale, self.bone_scale)

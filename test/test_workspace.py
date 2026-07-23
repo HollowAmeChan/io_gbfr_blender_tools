@@ -7,6 +7,7 @@ from gbfr_workspace import (
     WorkspaceError, find_workspace_json, resolve_model_bundle,
     resolve_model_export_targets,
 )
+from gbfr_material import resolve_albedo_texture
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -27,6 +28,8 @@ class WorkspaceTests(unittest.TestCase):
                 "source_mmesh_lod1": "source/data/model_streaming/lod1/pl9999.mmesh",
                 "source_mmesh_shadow": "source/data/model_streaming/shadowlod0/pl9999.mmesh",
                 "material": "unpack/data/model/pl/pl9999/vars/0.mmat.json",
+                "source_texture": "source/data/granite/2k/pl9999_body.dds",
+                "unpack_texture": "unpack/data/granite/2k/pl9999_body.dds",
                 "clp": "unpack/data/pl/pl9999/cloth/pl9999_0_0_clp.bxm.xml",
                 "clh": "unpack/data/pl/pl9999/cloth/pl9999_0_1_clh.bxm.xml",
             }
@@ -53,8 +56,11 @@ class WorkspaceTests(unittest.TestCase):
             bundle = resolve_model_bundle(root / paths["source_minfo"])
             self.assertEqual(root / paths["source_minfo"], bundle.minfo)
             self.assertEqual(root / paths["source_skeleton"], bundle.skeleton)
+            self.assertTrue(bundle.prefer_source)
+            self.assertEqual((root / "source", root / "unpack"), bundle.texture_roots)
             self.assertEqual(root / paths["source_mmesh"], bundle.mmesh)
             self.assertEqual(tuple(root / paths[name] for name in ("source_mmesh", "source_mmesh_lod1", "source_mmesh_shadow")), bundle.mmeshes)
+            self.assertEqual(root / paths["source_texture"], resolve_albedo_texture(bundle.texture_roots, "pl9999_body"))
             self.assertEqual(root / paths["material"], bundle.material_json)
             self.assertEqual(root / paths["sop"], bundle.sop)
             self.assertEqual((root / paths["mot"],), bundle.animations)
@@ -98,6 +104,7 @@ class WorkspaceTests(unittest.TestCase):
             bundle = resolve_model_bundle(minfo)
             targets = resolve_model_export_targets(workspace_path, "bg9999")
             self.assertIsNone(bundle.skeleton)
+            self.assertFalse(bundle.prefer_source)
             self.assertIsNone(targets.skeleton)
             self.assertIsNone(targets.reference_skeleton)
 

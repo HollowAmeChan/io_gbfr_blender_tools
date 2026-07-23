@@ -78,18 +78,28 @@ def load_material_definitions(path: str | Path) -> tuple[MaterialDefinition, ...
     return tuple(definitions)
 
 
-def resolve_albedo_texture(workspace_root: str | Path, texture_name: str) -> Path | None:
-    root = Path(workspace_root)
-    directories = (
-        root / "unpack/data/granite/2k",
-        root / "unpack/data/texture/2k",
-        root / "unpack/data/granite/4k",
-        root / "unpack/data/texture/4k",
-    )
+def resolve_albedo_texture(workspace_roots: str | Path | tuple[Path, ...], texture_name: str) -> Path | None:
+    if isinstance(workspace_roots, (str, Path)):
+        root = Path(workspace_roots)
+        # Keep the legacy workspace-root API while allowing source/unpack roots
+        # to be passed explicitly when resolving an imported model.
+        if (root / "unpack").is_dir() or (root / "source").is_dir():
+            roots = tuple(candidate for candidate in (root / "unpack", root / "source") if candidate.is_dir())
+        else:
+            roots = (root,)
+    else:
+        roots = tuple(Path(root) for root in workspace_roots)
     filenames = (f"{texture_name}.dds", f"{texture_name}_0.dds")
-    for directory in directories:
-        for filename in filenames:
-            candidate = directory / filename
-            if candidate.is_file():
-                return candidate.resolve()
+    for root in roots:
+        directories = (
+            root / "data/granite/2k",
+            root / "data/texture/2k",
+            root / "data/granite/4k",
+            root / "data/texture/4k",
+        )
+        for directory in directories:
+            for filename in filenames:
+                candidate = directory / filename
+                if candidate.is_file():
+                    return candidate.resolve()
     return None

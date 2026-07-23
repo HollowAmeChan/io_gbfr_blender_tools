@@ -112,7 +112,7 @@ def apply_workspace_materials(mesh_object: bpy.types.Object, bundle) -> tuple[in
         material_id = int(material.get("MaterialID", -1))
         definition = definitions[material_id] if 0 <= material_id < len(definitions) else None
         texture_path = (
-            resolve_albedo_texture(bundle.workspace_root, definition.albedo_name)
+            resolve_albedo_texture(bundle.texture_roots, definition.albedo_name)
             if definition is not None and definition.albedo_name else None
         )
         image = None
@@ -120,7 +120,7 @@ def apply_workspace_materials(mesh_object: bpy.types.Object, bundle) -> tuple[in
         eye_images = None
         if definition is not None and definition.is_eye_material:
             eye_paths = tuple(
-                resolve_albedo_texture(bundle.workspace_root, name)
+                resolve_albedo_texture(bundle.texture_roots, name)
                 for name in (
                     definition.eye_conjunctiva_name,
                     definition.eye_iris_name,
