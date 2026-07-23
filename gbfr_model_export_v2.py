@@ -690,7 +690,7 @@ def write_some_data(
 				# Construct faces, chunks, and meshes list
 				if mesh_name not in mesh_names_list:
 					mesh_names_list.append(mesh_name)
-				# mesh_id = mesh_names_list.index(mesh_name)
+				mesh_id = mesh_names_list.index(mesh_name)
 
 				for face in mesh_data.polygons:
 					# Build face table, offset vertex indices with the length of the vert_table
@@ -712,13 +712,13 @@ def write_some_data(
 						chunks_dict[chunk_id] = {
 							'offset': chunks_face_offset + (face.index * 3),
 							'count': 0,
-							'mesh_id': mesh_obj_index,
+							'mesh_id': mesh_id,
 							'material_id': material["MaterialID"],
 							'a5': 0,
 							'a6': 0
 						}
 
-						if lod_obj_index == 0: # Only calculate for first LOD object
+						if lod_obj_index == 0 and mesh_name not in mesh_bounds: # Only calculate for first LOD object
 							mesh_bounds[mesh_name] = { #Initialize chunk bounds at infinity
 								'min': {'x': float('inf'), 'y': float('inf'), 'z': float('inf')},
 								'max': {'x': float('-inf'), 'y': float('-inf'), 'z': float('-inf')}
@@ -863,6 +863,20 @@ def write_some_data(
 		}
 		for material in unique_materials_dict.values()
 	]
+
+	for lod_kind, lod_collection in (("LOD", lods_data), ("Shadow LOD", shadowlods_data)):
+		for lod_index, lod_data in enumerate(lod_collection):
+			for chunk_index, chunk in enumerate(lod_data['chunks']):
+				if not 0 <= chunk['mesh_id'] < len(meshes_table):
+					raise RuntimeError(
+						f"{lod_kind}{lod_index} chunk {chunk_index} references mesh ID {chunk['mesh_id']}, "
+						f"but the .minfo mesh table has {len(meshes_table)} entries"
+					)
+				if not 0 <= chunk['material_id'] < len(materials_table):
+					raise RuntimeError(
+						f"{lod_kind}{lod_index} chunk {chunk_index} references material ID {chunk['material_id']}, "
+						f"but the .minfo material table has {len(materials_table)} entries"
+					)
 	
 	minfo_data = {
 		'magic': 100000101, # Game only checks if it's at least some date, so set to 10000_01_01

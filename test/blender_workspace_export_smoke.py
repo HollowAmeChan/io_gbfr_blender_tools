@@ -56,6 +56,15 @@ weighted_mesh = next(
 )
 extra_group = weighted_mesh.vertex_groups.new(name=extra_bone_name)
 extra_group.add([0], 1.0, "REPLACE")
+
+# Blender appends .001 when a replacement object retains the source mesh name.
+# Both objects must map to the same global MeshInfo entry, not a local child index.
+duplicate_mesh = weighted_mesh.copy()
+duplicate_mesh.data = weighted_mesh.data.copy()
+duplicate_mesh.name = f"{weighted_mesh.name.split('.')[0]}.001"
+weighted_mesh.users_collection[0].objects.link(duplicate_mesh)
+duplicate_mesh.parent = weighted_mesh.parent
+assert duplicate_mesh.name.split('.')[0] == weighted_mesh.name.split('.')[0]
 removed_regular_lods = []
 for lod_object in list(session_root.children):
     name = lod_object.name.casefold()
@@ -129,6 +138,10 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
     shadow_lods = [path for path in outputs if path.suffix == ".mmesh" and path.parent.name.startswith("shadowlod")]
     assert model_info.LodsLength() == len(regular_lods)
     assert model_info.ShadowLodsLength() == len(shadow_lods)
+    for lod_index in range(model_info.LodsLength()):
+        lod = model_info.Lods(lod_index)
+        for chunk_index in range(lod.ChunksLength()):
+            assert lod.Chunks(chunk_index).MeshId() < model_info.MeshesLength()
     for index, output in enumerate(sorted(regular_lods, key=lambda path: path.parent.name)):
         lod = model_info.Lods(index)
         final_buffer = lod.Buffers(lod.BuffersLength() - 1)
