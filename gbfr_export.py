@@ -215,12 +215,12 @@ class ExportSomeData(Operator, ImportHelper):
     strict_skeleton_contract: BoolProperty(
         name="严格检查源骨架",
         description="阻止删除、重排或改父级后的源骨架导出；排查 cloth、SOP、动作引用时启用",
-        default=False,
+        default=True,
     )
     experimental_rename_new_bones: BoolProperty(
         name="实验：新增骨骼使用白名单编号",
         description="仅在临时导出副本中，将新增骨骼和对应顶点组按纯数字 _xxx、_cxx、_axx、_dxx 的优先级改名；不改变父子关系和原骨骼顺序",
-        default=False,
+        default=True,
     )
 
     def invoke(self, context, _event):
