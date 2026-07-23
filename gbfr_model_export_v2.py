@@ -347,7 +347,16 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 			chunks_face_offset = 0 # Updates after each mesh
 
 			vertex_group_verts = defaultdict(list)
-			mesh_objects = lod_obj.children
+			mesh_objects = tuple(lod_obj.children)
+			# Weight buffers are shared by the whole LOD.  They cannot switch
+			# between four and eight entries at a mesh boundary, otherwise all
+			# following vertices are read with the wrong stride by the game.
+			lod_weights_count = 4
+			if armature_obj is not None:
+				lod_weights_count = 8 if any(
+					max((len(vertex.groups) for vertex in mesh.data.vertices), default=0) > 4
+					for mesh in mesh_objects
+				) else 4
 			for mesh_obj_index, mesh_obj in enumerate(mesh_objects):
 				mesh_data = mesh_obj.data
 				mesh_name = mesh_obj.name.split('.')[0]
@@ -369,7 +378,7 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 					# Build vertex groups
 					# ================================================
 					max_num_weights = max([len(v.groups) for v in mesh_data.vertices])
-					weights_count = 4 if max_num_weights <= 4 else 8 # sets of 4 or 8
+					weights_count = lod_weights_count # one stride for every mesh in this LOD
 					if max_num_weights > 8:
 						raise UserWarning(
 							format_exception(f"Mesh '{mesh_name}' has one or more vertices with more than 8 vertex weights.\n"
@@ -387,7 +396,7 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 						for n in range(weights_count): # Vertex Groups compiled as sets of 4 or 8
 							if n < len(v.groups): # Existing Groups
 								vgroup_index = v.groups[n].group
-								if vgroup_index > vertex_groups_length: continue # Skip invalid group index
+								if vgroup_index >= vertex_groups_length: continue # Skip invalid group index
 								group_name = mesh_obj.vertex_groups[vgroup_index].name
 								bone_index = bone_name_to_index_dict.get(group_name, None)
 								if bone_index is None:
