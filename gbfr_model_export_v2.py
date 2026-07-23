@@ -44,6 +44,14 @@ def encode_bone_group_name(group_name): # Encode bone group name to 4-byte littl
 	encoded_group_name = str(int.from_bytes(encoded_group_name.encode('ASCII'), 'little'))
 	return encoded_group_name
 
+def lod_object_sort_key(lod_object):
+	name = lod_object.name.lower()
+	shadow_lod = next((index for index in range(3) if f"shadowlod{index}" in name), None)
+	if shadow_lod is not None:
+		return (1, shadow_lod, name)
+	lod = next((index for index in range(5) if f"lod{index}" in name), None)
+	return (0, lod, name) if lod is not None else (2, 0, name)
+
 def build_skeleton(armature_obj):
 	DeformJointsTable = []
 	BoneInfoTablesList = []
@@ -165,7 +173,7 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 		fr"model\{model_name[:2]}\{model_name}" if create_model_subfolders else "")
 	os.makedirs(model_path, exist_ok=True)
 	
-	lod_objects = root_obj.children
+	lod_objects = sorted(root_obj.children, key=lod_object_sort_key)
 	mesh_objects = []
 	for lod in lod_objects:
 		mesh_objects.extend(list(lod.children))

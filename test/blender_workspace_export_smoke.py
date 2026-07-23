@@ -28,6 +28,19 @@ activate_session(bpy.context, session)
 temporary_parent = bundle.workspace_root / ".gbfr"
 temporary_parent.mkdir(parents=True, exist_ok=True)
 
+# Typical mod workflow only edits LOD0. Lower regular LODs are intentionally removed.
+session_root = session.gbfr_session.root
+removed_regular_lods = []
+for lod_object in list(session_root.children):
+    name = lod_object.name.casefold()
+    if not any(f"lod{index}" in name for index in range(1, 5)) or "shadowlod" in name:
+        continue
+    removed_regular_lods.append(name)
+    for child in list(lod_object.children):
+        bpy.data.objects.remove(child, do_unlink=True)
+    bpy.data.objects.remove(lod_object, do_unlink=True)
+assert removed_regular_lods
+
 with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) as temporary:
     root = Path(temporary)
     model_id = bundle.model_id
@@ -77,6 +90,7 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
         lod = model_info.Lods(index)
         final_buffer = lod.Buffers(lod.BuffersLength() - 1)
         assert output.stat().st_size == final_buffer.Offset() + final_buffer.Size()
+    assert len({output.read_bytes() for output in regular_lods}) == 1
 
     assert Path(session.gbfr_session.workspace_path) == workspace_path
     assert Path(session.gbfr_session.resolved_minfo_path) == minfo_output

@@ -8,7 +8,7 @@ import shutil
 import tempfile
 
 import bpy
-from bpy.props import FloatProperty, StringProperty
+from bpy.props import BoolProperty, FloatProperty, StringProperty
 from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper
 
@@ -41,6 +41,63 @@ def _duplicate_hierarchy(root, collection):
             if modifier.type == "ARMATURE" and modifier.object in mapping:
                 modifier.object = mapping[modifier.object]
     return mapping[root]
+
+
+def _stream_level(name):
+    lowered = name.casefold()
+    for index in range(3):
+        level = f"shadowlod{index}"
+        if level in lowered:
+            return level
+    for index in range(5):
+        level = f"lod{index}"
+        if level in lowered:
+            return level
+    return None
+
+
+def _duplicate_lod(source, parent, collection, name):
+    mapping = {}
+    for source_object in _hierarchy(source):
+        duplicate = source_object.copy()
+        if source_object.data is not None:
+            duplicate.data = source_object.data.copy()
+        collection.objects.link(duplicate)
+        mapping[source_object] = duplicate
+
+    for source_object, duplicate in mapping.items():
+        duplicate.parent = mapping.get(source_object.parent, parent)
+        for modifier in duplicate.modifiers:
+            if modifier.type == "ARMATURE" and modifier.object in mapping:
+                modifier.object = mapping[modifier.object]
+    duplicate_root = mapping[source]
+    duplicate_root.name = name
+    return duplicate_root
+
+
+def _fill_missing_regular_lods(root, collection, targets):
+    children = {
+        level: child
+        for child in root.children
+        if (level := _stream_level(child.name)) is not None
+    }
+    source = children.get("lod0")
+    if source is None:
+        return ()
+
+    created = []
+    required = {
+        level
+        for target in targets.mmeshes
+        if (level := _stream_level(target.parent.name)) is not None
+        and level.startswith("lod")
+    }
+    for index in range(1, 5):
+        level = f"lod{index}"
+        if level in required and level not in children:
+            children[level] = _duplicate_lod(source, root, collection, level)
+            created.append(level)
+    return tuple(created)
 
 
 def _atomic_install(source, target, temporary_files):
@@ -91,6 +148,11 @@ class ExportSomeData(Operator, ImportHelper):
     filename_ext = ".json"
     filter_glob: StringProperty(default="workspace.json;*.json", options={"HIDDEN"}, maxlen=255)
     export_scale: FloatProperty(name="导出缩放", default=1.0)
+    fill_missing_lods: BoolProperty(
+        name="用 LOD0 补齐缺失 LOD",
+        description="导出时用最高精度 lod0 生成工作区要求但当前模型中缺少的 lod1-lod4；不会修改 Blender 场景",
+        default=True,
+    )
 
     def invoke(self, context, _event):
         from .gbfr_session import active_session_collection
@@ -103,6 +165,7 @@ class ExportSomeData(Operator, ImportHelper):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "export_scale")
+        layout.prop(self, "fill_missing_lods")
         from .gbfr_session import active_session_collection
         collection = active_session_collection(context)
         box = layout.box()
@@ -123,6 +186,8 @@ class ExportSomeData(Operator, ImportHelper):
                 continue
             box.label(text=str(target.relative_to(targets.workspace_root)), icon="FILE")
         box.label(text="不会写入 build；minfo 由 v2 构建器直接生成", icon="INFO")
+        if self.fill_missing_lods:
+            box.label(text="缺失的低精度 LOD 将在导出时使用 LOD0", icon="DUPLICATE")
 
     def execute(self, context):
         from .gbfr_session import active_session_collection, active_session_root
@@ -145,6 +210,10 @@ class ExportSomeData(Operator, ImportHelper):
             context.view_layer.objects.active = export_root
             export_root.select_set(True)
 
+            filled_lods = ()
+            if self.fill_missing_lods:
+                filled_lods = _fill_missing_regular_lods(export_root, export_collection, targets)
+
             with tempfile.TemporaryDirectory(prefix=f"gbfr_v2_{targets.model_id}_") as staging:
                 staging_root = Path(staging)
                 gbfr_model_export_v2.write_some_data(
@@ -157,7 +226,10 @@ class ExportSomeData(Operator, ImportHelper):
 
             state.workspace_path = str(targets.workspace_json)
             state.resolved_minfo_path = str(targets.minfo)
-            state.last_status = "全部 LOD 已导出到 unpack"
+            if filled_lods:
+                state.last_status = f"已导出到 unpack；LOD0 补齐 {', '.join(filled_lods)}"
+            else:
+                state.last_status = "全部 LOD 已导出到 unpack"
             self.report({"INFO"}, f"已导出到 {targets.workspace_root / 'unpack'}")
             return {"FINISHED"}
         except Exception as error:
