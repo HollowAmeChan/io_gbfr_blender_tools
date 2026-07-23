@@ -114,6 +114,84 @@ def ordered_export_bones(armature_obj, reference_skeleton=None):
 	return [bone for _index, bone in indexed] + [bone for _index, bone in extras]
 
 
+def _skeleton_bone_names(reference_skeleton):
+	return {
+		reference_skeleton.Body(index).Name().decode("utf-8")
+		for index in range(reference_skeleton.BodyLength())
+	}
+
+
+def _allocate_appended_bone_names(reference_names, occupied_names, count):
+	"""Allocate names from the experimentally approved GBFR namespaces."""
+	# `_xxx` is deliberately numeric-only here (for example `_016`); the
+	# letter-prefixed namespaces have their own priority and must not overlap.
+	candidates = [
+		*(f"_{value:03d}" for value in range(1000)),
+		*(f"_c{value:02x}" for value in range(0x100)),
+		*(f"_a{value:02x}" for value in range(0x100)),
+		*(f"_d{value:02x}" for value in range(0x100)),
+	]
+	allocated = []
+	for candidate in candidates:
+		if candidate in reference_names or candidate in occupied_names:
+			continue
+		allocated.append(candidate)
+		occupied_names.add(candidate)
+		if len(allocated) == count:
+			return allocated
+	raise RuntimeError(
+		"实验性新增骨骼没有可用的白名单名称（优先 _xxx、_cxx、_axx、_dxx）。"
+	)
+
+
+def rename_new_bones_for_experimental_export(armature_obj, mesh_objects, reference_skeleton):
+	"""Rename only non-reference bones/groups on the temporary export copy.
+
+	The bone objects and their parent links are preserved. The caller must pass
+	the duplicated export hierarchy so the Blender scene is never mutated.
+	"""
+	if reference_skeleton is None:
+		raise RuntimeError("实验性新增骨骼改名需要 reference skeleton。")
+
+	reference_names = _skeleton_bone_names(reference_skeleton)
+	native_bones = list(armature_obj.data.bones)
+	extra_bones = [
+		bone for bone in native_bones
+		if export_bone_name(bone) not in reference_names
+	]
+	if not extra_bones:
+		return ()
+
+	reserved_names = {bone.name for bone in native_bones}
+	reserved_names.update(
+		group.name
+		for mesh_obj in mesh_objects
+		for group in mesh_obj.vertex_groups
+	)
+	new_names = _allocate_appended_bone_names(reference_names, reserved_names, len(extra_bones))
+
+	# Blender auto-suffixes duplicate names, so use a collision-free temporary
+	# name for both bones and vertex groups before assigning the final names.
+	rename_records = []
+	for index, bone in enumerate(extra_bones):
+		old_name = bone.name
+		temporary_name = f"__gbfr_export_extra_{index}"
+		bone.name = temporary_name
+		for mesh_obj in mesh_objects:
+			for group in mesh_obj.vertex_groups:
+				if group.name == old_name:
+					group.name = temporary_name
+		final_name = new_names[index]
+		bone.name = final_name
+		for mesh_obj in mesh_objects:
+			for group in mesh_obj.vertex_groups:
+				if group.name == temporary_name:
+					group.name = final_name
+		rename_records.append((old_name, final_name))
+
+	return tuple(rename_records)
+
+
 def build_skeleton(armature_obj, deform_joints_table=None, export_bones=None):
 	export_bones = list(export_bones) if export_bones is not None else ordered_export_bones(armature_obj)
 	bone_index_by_name = {bone.name: index for index, bone in enumerate(export_bones)}
@@ -214,7 +292,14 @@ def build_mesh_vert_dictionary(mesh_data):
 # =======================================================================================================================
 # MAIN EXPORT FUNCTION
 # =======================================================================================================================
-def write_some_data(context, filepath, export_scale:float, create_model_subfolders:bool, reference_skeleton_path=None):
+def write_some_data(
+	context,
+	filepath,
+	export_scale: float,
+	create_model_subfolders: bool,
+	reference_skeleton_path=None,
+	experimental_rename_new_bones: bool = False,
+):
 	total_export_timer_start = time.perf_counter()
 	export_section_timer_start = time.perf_counter() # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 	
@@ -320,6 +405,12 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 			with open(reference_skeleton_path, "rb") as reference_file:
 				reference_buffer = bytearray(reference_file.read())
 			reference_skeleton = ModelSkeleton.GetRootAs(reference_buffer, 0)
+		if experimental_rename_new_bones:
+			renamed_bones = rename_new_bones_for_experimental_export(
+				armature_obj, mesh_objects, reference_skeleton
+			)
+			for old_name, new_name in renamed_bones:
+				print(f"Experimental appended bone rename: {old_name} -> {new_name}")
 		export_bones = ordered_export_bones(armature_obj, reference_skeleton)
 		bone_name_to_index_dict = {bone.name: i for i, bone in enumerate(export_bones)}
 		# The game keeps skeleton bone 0 as the deform root even when no vertex

@@ -195,6 +195,11 @@ class ExportSomeData(Operator, ImportHelper):
         description="阻止删除、重排或改父级后的源骨架导出；排查 cloth、SOP、动作引用时启用",
         default=False,
     )
+    experimental_rename_new_bones: BoolProperty(
+        name="实验：新增骨骼使用白名单编号",
+        description="仅在临时导出副本中，将新增骨骼和对应顶点组按纯数字 _xxx、_cxx、_axx、_dxx 的优先级改名；不改变父子关系和原骨骼顺序",
+        default=False,
+    )
 
     def invoke(self, context, _event):
         from .gbfr_session import active_session_collection
@@ -209,6 +214,7 @@ class ExportSomeData(Operator, ImportHelper):
         layout.prop(self, "export_scale")
         layout.prop(self, "fill_missing_lods")
         layout.prop(self, "strict_skeleton_contract")
+        layout.prop(self, "experimental_rename_new_bones")
         from .gbfr_session import active_session_collection
         collection = active_session_collection(context)
         box = layout.box()
@@ -231,6 +237,8 @@ class ExportSomeData(Operator, ImportHelper):
         box.label(text="不会写入 build；minfo 由 v2 构建器直接生成", icon="INFO")
         if targets.reference_skeleton is not None:
             box.label(text="源骨骼索引保持不变；融合新增骨骼统一追加到末尾", icon="LOCKED")
+        if self.experimental_rename_new_bones:
+            box.label(text="实验模式：白名单优先 _xxx → _cxx → _axx → _dxx，只改名不改父子关系", icon="INFO")
         if self.fill_missing_lods:
             box.label(text="缺失的低精度 LOD 将在导出时使用 LOD0", icon="DUPLICATE")
 
@@ -269,6 +277,7 @@ class ExportSomeData(Operator, ImportHelper):
                     self.export_scale,
                     True,
                     reference_skeleton_path=targets.reference_skeleton,
+                    experimental_rename_new_bones=self.experimental_rename_new_bones,
                 )
                 _install_workspace_export(staging_root, targets)
 

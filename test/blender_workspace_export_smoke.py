@@ -20,8 +20,14 @@ assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINI
 
 from io_gbfr_blender_tools.Entities.MInfo_ModelInfo.ModelInfo import ModelInfo
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
+from io_gbfr_blender_tools.gbfr_model_export_v2 import _allocate_appended_bone_names
 from io_gbfr_blender_tools.gbfr_session import activate_session, session_collections
 from io_gbfr_blender_tools.gbfr_workspace import resolve_model_bundle
+
+occupied_append_names = {f"_{index:03d}" for index in range(1000)}
+assert _allocate_appended_bone_names(
+    {"_a79"}, occupied_append_names, 2
+) == ["_c00", "_c01"]
 
 bundle = resolve_model_bundle(minfo)
 session = session_collections(bpy.context.scene)[0]
@@ -42,6 +48,14 @@ extra_bone.parent = session_root.data.edit_bones[6]
 extra_bone_name = extra_bone.name
 bpy.ops.object.mode_set(mode="OBJECT")
 assert session_root.data.bones.find(extra_bone_name) < original_bone_count
+weighted_mesh = next(
+	mesh
+	for lod in session_root.children
+	for mesh in lod.children
+	if mesh.type == "MESH" and len(mesh.data.vertices) > 0
+)
+extra_group = weighted_mesh.vertex_groups.new(name=extra_bone_name)
+extra_group.add([0], 1.0, "REPLACE")
 removed_regular_lods = []
 for lod_object in list(session_root.children):
     name = lod_object.name.casefold()
@@ -87,7 +101,11 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
         "ModelFiles": records,
     }), encoding="utf-8")
 
-    result = bpy.ops.gbfr.export_mesh(filepath=str(workspace_path), export_scale=1.0)
+    result = bpy.ops.gbfr.export_mesh(
+        filepath=str(workspace_path),
+        export_scale=1.0,
+        experimental_rename_new_bones=True,
+    )
     assert result == {"FINISHED"}, (result, session.gbfr_session.last_status)
     outputs = [root / "unpack" / relative_path for _kind, _source, relative_path in files]
     assert all(path.is_file() and path.stat().st_size > 0 for path in outputs), outputs
@@ -102,8 +120,11 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
         exported_bone = exported_skeleton.Body(index)
         assert exported_bone.Name() == source_bone.Name(), index
         assert exported_bone.ParentId() == source_bone.ParentId(), index
-    assert exported_skeleton.Body(original_bone_count).Name() == b"GBFR_ORDER_TEST_EXTRA"
+    appended_name = exported_skeleton.Body(original_bone_count).Name().decode("utf-8")
+    assert appended_name == "_016"
     assert exported_skeleton.Body(original_bone_count).ParentId() == 6
+    assert session_root.data.bones.get(extra_bone_name) is not None
+    assert weighted_mesh.vertex_groups.get(extra_bone_name) is not None
     regular_lods = [path for path in outputs if path.suffix == ".mmesh" and path.parent.name.startswith("lod")]
     shadow_lods = [path for path in outputs if path.suffix == ".mmesh" and path.parent.name.startswith("shadowlod")]
     assert model_info.LodsLength() == len(regular_lods)
