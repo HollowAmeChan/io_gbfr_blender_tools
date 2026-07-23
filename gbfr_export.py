@@ -13,6 +13,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper
 
 from . import gbfr_model_export_v2
+from .Entities.ModelSkeleton import ModelSkeleton
 from .gbfr_workspace import resolve_model_export_targets
 
 
@@ -138,6 +139,41 @@ def _install_workspace_export(staging_root, targets):
                 pass
 
 
+def _validate_skeleton_contract(root, reference_path):
+    if reference_path is None:
+        return
+    if root.type != "ARMATURE":
+        raise RuntimeError("源资源包含 skeleton，但当前导出根对象不是骨架")
+
+    reference = ModelSkeleton.GetRootAs(bytearray(Path(reference_path).read_bytes()), 0)
+    current_bones = root.data.bones
+    problems = []
+    if len(current_bones) < reference.BodyLength():
+        problems.append(f"骨骼数量 {len(current_bones)} 少于源骨架 {reference.BodyLength()}")
+
+    for index in range(min(len(current_bones), reference.BodyLength())):
+        source_bone = reference.Body(index)
+        source_name = source_bone.Name().decode("utf-8")
+        current_bone = current_bones[index]
+        current_name = gbfr_model_export_v2.export_bone_name(current_bone)
+        current_parent = current_bones.find(current_bone.parent.name) if current_bone.parent else 65535
+        if current_name != source_name:
+            problems.append(f"索引 {index}: 源骨骼 {source_name}，当前为 {current_name}")
+        if current_parent != source_bone.ParentId():
+            problems.append(
+                f"索引 {index} ({source_name}): 源父索引 {source_bone.ParentId()}，当前为 {current_parent}"
+            )
+        if len(problems) >= 8:
+            break
+
+    if problems:
+        detail = "；".join(problems)
+        raise RuntimeError(
+            "骨架索引契约已改变，cloth/SOP/动作可能引用错误骨骼。"
+            f"请恢复源骨骼及顺序，或关闭“严格检查源骨架”后继续实验。详情：{detail}"
+        )
+
+
 class ExportSomeData(Operator, ImportHelper):
     """Export the active minfo session to workspace unpack."""
 
@@ -153,6 +189,11 @@ class ExportSomeData(Operator, ImportHelper):
         description="导出时用最高精度 lod0 生成工作区要求但当前模型中缺少的 lod1-lod4；不会修改 Blender 场景",
         default=True,
     )
+    strict_skeleton_contract: BoolProperty(
+        name="严格检查源骨架",
+        description="阻止删除、重排或改父级后的源骨架导出；排查 cloth、SOP、动作引用时启用",
+        default=False,
+    )
 
     def invoke(self, context, _event):
         from .gbfr_session import active_session_collection
@@ -166,6 +207,7 @@ class ExportSomeData(Operator, ImportHelper):
         layout = self.layout
         layout.prop(self, "export_scale")
         layout.prop(self, "fill_missing_lods")
+        layout.prop(self, "strict_skeleton_contract")
         from .gbfr_session import active_session_collection
         collection = active_session_collection(context)
         box = layout.box()
@@ -202,6 +244,8 @@ class ExportSomeData(Operator, ImportHelper):
         original_scene = context.window.scene
         try:
             targets = resolve_model_export_targets(self.filepath, state.model_id)
+            if self.strict_skeleton_contract:
+                _validate_skeleton_contract(root, targets.reference_skeleton)
             export_scene = bpy.data.scenes.new(name=f"GBFR Export | {state.model_id}")
             export_collection = bpy.data.collections.new(name="Model")
             export_scene.collection.children.link(export_collection)

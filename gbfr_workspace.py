@@ -49,6 +49,7 @@ class ModelExportTargets:
     workspace_root: Path
     model_id: str
     template_minfo: Path
+    reference_skeleton: Path | None
     minfo: Path
     skeleton: Path | None
     mmeshes: tuple[Path, ...]
@@ -91,6 +92,12 @@ def _existing_asset_path(root: Path, record: dict, keys=("Input", "Source")) -> 
     if candidates:
         raise WorkspaceError(f"工作区资源不存在: {candidates[0]}")
     raise WorkspaceError("workspace.json 资源记录缺少路径")
+
+
+def _selected_asset_path(root: Path, record: dict, prefer_source: bool) -> Path:
+    """Resolve an import asset from the same source tree as the selected minfo."""
+    keys = ("Source", "Input") if prefer_source else ("Input", "Source")
+    return _existing_asset_path(root, record, keys=keys)
 
 
 def _find_model_record(records: list[dict], file_type: str, stem: str) -> dict:
@@ -182,6 +189,7 @@ def resolve_model_export_targets(workspace_json: str | Path, model_id: str) -> M
         workspace_root=root,
         model_id=model_id,
         template_minfo=_existing_asset_path(root, minfo_record),
+        reference_skeleton=_existing_asset_path(root, skeleton_record, keys=("Source", "Input")) if skeleton_record else None,
         minfo=_unpack_target(root, unpack_root, minfo_record, "minfo"),
         skeleton=_unpack_target(root, unpack_root, skeleton_record, "skeleton") if skeleton_record else None,
         mmeshes=tuple(_unpack_target(root, unpack_root, record, "mmesh") for record in mmesh_records),
@@ -207,14 +215,23 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         raise WorkspaceError("所选 minfo 未在 workspace.json 的 ModelFiles 中唯一登记")
 
     model_id = selected.stem
-    minfo = _existing_asset_path(root, minfo_matches[0])
+    minfo_record = minfo_matches[0]
+    source_minfo = _asset_path(root, minfo_record.get("Source"))
+    prefer_source = bool(source_minfo and _same_path(selected, source_minfo))
+    minfo = _selected_asset_path(root, minfo_record, prefer_source)
     skeleton_record = _find_optional_model_record(records, "skeleton", model_id)
-    skeleton = _existing_asset_path(root, skeleton_record) if skeleton_record else None
-    mmeshes = tuple(_existing_asset_path(root, record) for record in _find_mmesh_records(records, model_id))
+    skeleton = _selected_asset_path(root, skeleton_record, prefer_source) if skeleton_record else None
+    mmeshes = tuple(
+        _selected_asset_path(root, record, prefer_source)
+        for record in _find_mmesh_records(records, model_id)
+    )
     character_id = str(document.get("CharacterId") or model_id)
 
-    material_candidate = root / "unpack" / "data" / "model" / model_id[:2] / model_id / "vars" / "0.mmat.json"
-    material_json = material_candidate.resolve() if material_candidate.is_file() else None
+    material_candidates = []
+    material_root = root / ("source" if prefer_source else "unpack") / "data" / "model" / model_id[:2] / model_id / "vars"
+    material_candidates.append(material_root / "0.mmat.json")
+    material_candidates.append(root / ("unpack" if prefer_source else "source") / "data" / "model" / model_id[:2] / model_id / "vars" / "0.mmat.json")
+    material_json = next((path.resolve() for path in material_candidates if path.is_file()), None)
 
     sop_report = next(
         (record for record in document.get("SkeletonConstraints") or []

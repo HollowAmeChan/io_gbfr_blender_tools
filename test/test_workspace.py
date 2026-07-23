@@ -19,9 +19,13 @@ class WorkspaceTests(unittest.TestCase):
                 "sop": "source/data/model/pl/pl9999/pl9999.sop",
                 "mot": "source/data/pl/pl9999/pl9999_0001.mot",
                 "skeleton": "unpack/data/model/pl/pl9999/pl9999.skeleton",
+                "source_skeleton": "source/data/model/pl/pl9999/pl9999.skeleton",
                 "mmesh": "unpack/data/model_streaming/lod0/pl9999.mmesh",
                 "mmesh_lod1": "unpack/data/model_streaming/lod1/pl9999.mmesh",
                 "mmesh_shadow": "unpack/data/model_streaming/shadowlod0/pl9999.mmesh",
+                "source_mmesh": "source/data/model_streaming/lod0/pl9999.mmesh",
+                "source_mmesh_lod1": "source/data/model_streaming/lod1/pl9999.mmesh",
+                "source_mmesh_shadow": "source/data/model_streaming/shadowlod0/pl9999.mmesh",
                 "material": "unpack/data/model/pl/pl9999/vars/0.mmat.json",
                 "clp": "unpack/data/pl/pl9999/cloth/pl9999_0_0_clp.bxm.xml",
                 "clh": "unpack/data/pl/pl9999/cloth/pl9999_0_1_clh.bxm.xml",
@@ -34,10 +38,10 @@ class WorkspaceTests(unittest.TestCase):
                 "Version": 1, "CharacterId": "pl9999",
                 "ModelFiles": [
                     {"FileType": "minfo", "Input": paths["minfo"], "Source": paths["source_minfo"]},
-                    {"FileType": "skeleton", "Input": paths["skeleton"]},
-                    {"FileType": "mmesh", "Input": paths["mmesh"]},
-                    {"FileType": "mmesh", "Input": paths["mmesh_shadow"]},
-                    {"FileType": "mmesh", "Input": paths["mmesh_lod1"]},
+                    {"FileType": "skeleton", "Input": paths["skeleton"], "Source": paths["source_skeleton"]},
+                    {"FileType": "mmesh", "Input": paths["mmesh"], "Source": paths["source_mmesh"]},
+                    {"FileType": "mmesh", "Input": paths["mmesh_shadow"], "Source": paths["source_mmesh_shadow"]},
+                    {"FileType": "mmesh", "Input": paths["mmesh_lod1"], "Source": paths["source_mmesh_lod1"]},
                 ],
                 "ClothFiles": [
                     {"Category": "clp", "GroupId": 0, "Xml": paths["clp"], "Source": "source/a.bxm", "Output": "build/a.bxm"},
@@ -47,8 +51,10 @@ class WorkspaceTests(unittest.TestCase):
             workspace_path = root / "workspace.json"
             workspace_path.write_text(json.dumps(workspace), encoding="utf-8")
             bundle = resolve_model_bundle(root / paths["source_minfo"])
-            self.assertEqual(root / paths["mmesh"], bundle.mmesh)
-            self.assertEqual(tuple(root / paths[name] for name in ("mmesh", "mmesh_lod1", "mmesh_shadow")), bundle.mmeshes)
+            self.assertEqual(root / paths["source_minfo"], bundle.minfo)
+            self.assertEqual(root / paths["source_skeleton"], bundle.skeleton)
+            self.assertEqual(root / paths["source_mmesh"], bundle.mmesh)
+            self.assertEqual(tuple(root / paths[name] for name in ("source_mmesh", "source_mmesh_lod1", "source_mmesh_shadow")), bundle.mmeshes)
             self.assertEqual(root / paths["material"], bundle.material_json)
             self.assertEqual(root / paths["sop"], bundle.sop)
             self.assertEqual((root / paths["mot"],), bundle.animations)
@@ -58,6 +64,7 @@ class WorkspaceTests(unittest.TestCase):
             targets = resolve_model_export_targets(workspace_path, "pl9999")
             self.assertEqual(root / paths["minfo"], targets.minfo)
             self.assertEqual(root / paths["skeleton"], targets.skeleton)
+            self.assertEqual(root / paths["source_skeleton"], targets.reference_skeleton)
             self.assertEqual(root / paths["mmesh"], targets.mmesh)
             self.assertEqual(tuple(root / paths[name] for name in ("mmesh", "mmesh_lod1", "mmesh_shadow")), targets.mmeshes)
 
@@ -92,6 +99,7 @@ class WorkspaceTests(unittest.TestCase):
             targets = resolve_model_export_targets(workspace_path, "bg9999")
             self.assertIsNone(bundle.skeleton)
             self.assertIsNone(targets.skeleton)
+            self.assertIsNone(targets.reference_skeleton)
 
     def test_export_rejects_model_target_outside_unpack(self):
         with tempfile.TemporaryDirectory() as temporary:

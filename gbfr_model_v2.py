@@ -214,6 +214,7 @@ def get_vertex_colors(mmesh_file, LOD, lod_buffers_index:int):
 
 def get_texcoords(mmesh_file, LOD, lod_buffers_index:int):
 	TexCoordsTable = [] # Coords are stored per vertex
+	mmesh_file.seek(LOD.Buffers(lod_buffers_index).Offset())
 	for v in range(LOD.Buffers(lod_buffers_index).Size()//4):
 		try: # TODO: Investigate why this dies with some bg objects (e.g. bg528c)
 			tex_coord = struct.unpack('<ee', mmesh_file.read(2*2))
@@ -265,7 +266,28 @@ def read_some_data(
 	mesh_objects = []
 	
 	materials_list = []
+	materials_by_id = {}
 	MaterialsTable = [model_info.Materials(i) for i in range(model_info.MaterialsLength())]
+	used_material_ids = set()
+	for lod_getter, lod_count in (
+		(model_info.Lods, model_info.LodsLength()),
+		(model_info.ShadowLods, model_info.ShadowLodsLength()),
+	):
+		for lod_idx in range(lod_count):
+			lod = lod_getter(lod_idx)
+			for chunk_idx in range(lod.ChunksLength()):
+				used_material_ids.add(lod.Chunks(chunk_idx).MaterialId())
+	used_material_ids = sorted(used_material_ids)
+	if len(used_material_ids) == len(MaterialsTable):
+		MaterialIdsTable = used_material_ids
+	else:
+		# Most files store only used materials, ordered by their possibly sparse IDs.
+		# Fall back to the legacy direct-index convention when the counts disagree.
+		MaterialIdsTable = list(range(len(MaterialsTable)))
+		print(
+			"Material metadata/count mismatch; using direct material indices:",
+			len(MaterialsTable), used_material_ids,
+		)
 
 	# Build each LOD Mesh
 	# ========================================================================================
@@ -416,19 +438,28 @@ def read_some_data(
 
 			# Build Mesh Materials first
 			for mat_index, mat_data in enumerate(MaterialsTable):
+				material_id = MaterialIdsTable[mat_index]
 				mat_name = str(mat_data.UniqueNameHash())
 				if mat_index < len(materials_list):
 					mat = materials_list[mat_index]
 				else:
 					mat = bpy.data.materials.new(name=f"{model_name}_{mat_name}")
 					materials_list.append(mat)
-				mat["MaterialID"] = mat_index # Add material ID as custom property
+				mat["MaterialID"] = material_id # Preserve the sparse ID used by LOD chunks and .mmat.
 				mat["unique_name_hash"] = mat_name
 				mat["material_flags"] = byte_to_bool_array(mat_data.MaterialFlags())
+				materials_by_id[material_id] = mat
 
 			for chunk_idx, chunk in enumerate(LodChunksDict[mesh_index]):
 				# Attach used material to mesh
-				mat = materials_list[chunk.MaterialId()]
+				material_id = chunk.MaterialId()
+				mat = materials_by_id.get(material_id)
+				if mat is None:
+					# Keep geometry importable even if a malformed file omits material metadata.
+					mat = bpy.data.materials.new(name=f"{model_name}_material_{material_id}")
+					mat["MaterialID"] = material_id
+					materials_by_id[material_id] = mat
+					print(f"Missing .minfo material metadata for material ID {material_id}; using a placeholder")
 				if not mesh_data.materials.get(mat.name):
 					mesh_data.materials.append(mat)
 				mat_index = mesh_data.materials.find(mat.name)

@@ -52,27 +52,30 @@ def lod_object_sort_key(lod_object):
 	lod = next((index for index in range(5) if f"lod{index}" in name), None)
 	return (0, lod, name) if lod is not None else (2, 0, name)
 
-def build_skeleton(armature_obj):
-	DeformJointsTable = []
+def export_bone_name(bone):
+	export_name = bone.name
+	if not export_name.startswith('_'):
+		original_name = str(bone.get('gbfr_original_name') or bone.get('original_name') or '')
+		bone_id = int(bone.get('gbfr_bone_id', -1))
+		if original_name.startswith('_'):
+			export_name = original_name
+		elif bone_id >= 0:
+			export_name = f'_{bone_id:03x}'
+	return export_name
+
+
+def build_skeleton(armature_obj, deform_joints_table=None):
+	DeformJointsTable = list(deform_joints_table) if deform_joints_table is not None else list(range(len(armature_obj.data.bones)))
 	BoneInfoTablesList = []
 	
 	skeleton_builder = Builder(0)
 	for n, bone in enumerate(armature_obj.data.bones):
-		DeformJointsTable.append(n) # TODO: Check that bone is assigned to a vertex group(?) Doesn't seem to matter
-		
 		parent = bone.parent
 		if parent is None:
 			parent = 65535
 		else:
 			parent = armature_obj.pose.bones.find(parent.name)
-		export_name = bone.name
-		if not export_name.startswith('_'):
-			original_name = str(bone.get('gbfr_original_name') or bone.get('original_name') or '')
-			bone_id = int(bone.get('gbfr_bone_id', -1))
-			if original_name.startswith('_'):
-				export_name = original_name
-			elif bone_id >= 0:
-				export_name = f'_{bone_id:03x}'
+		export_name = export_bone_name(bone)
 		name = skeleton_builder.CreateString(export_name)
 		bone_matrix = bone.matrix_local
 		if bone.parent:
@@ -261,6 +264,31 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 	deform_bones_table = []
 	if armature_obj:
 		bone_name_to_index_dict = {bone.name: i for i, bone in enumerate(armature_obj.data.bones)}
+		# The game keeps skeleton bone 0 as the deform root even when no vertex
+		# is directly weighted to it.
+		used_bone_indices = {0} if armature_obj.data.bones else set()
+		for mesh_obj in mesh_objects:
+			for vertex in mesh_obj.data.vertices:
+				for influence in vertex.groups:
+					if influence.weight <= 0.0:
+						continue
+					if influence.group >= len(mesh_obj.vertex_groups):
+						raise UserWarning(format_exception(
+							f"Vertex {vertex.index} on '{mesh_obj.name}' references invalid vertex group {influence.group}."
+						))
+					group_name = mesh_obj.vertex_groups[influence.group].name
+					bone_index = bone_name_to_index_dict.get(group_name)
+					if bone_index is None:
+						raise UserWarning(format_exception(
+							f"Missing bone for Vertex Group '{group_name}' on '{mesh_obj.name}'.\n"
+							"Either create the bone or remove the Vertex Group."
+						))
+					used_bone_indices.add(bone_index)
+		deform_bones_table = sorted(used_bone_indices)
+		deform_index_by_bone_index = {
+			bone_index: deform_index
+			for deform_index, bone_index in enumerate(deform_bones_table)
+		}
 		# Re-encode and rename all the bone groups back to 4-byte little-endian ASCII uints
 		# ================================================
 		bone_groups = armature_obj.data.collections if bpy.app.version >= (4, 0, 0) else armature_obj.pose.bone_groups
@@ -278,7 +306,7 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 
 		# Save skeleton_buffer output to .skeleton file
 		# ================================================
-		skeleton_buffer, deform_bones_table = build_skeleton(armature_obj)
+		skeleton_buffer, deform_bones_table = build_skeleton(armature_obj, deform_bones_table)
 		try:
 			# skeleton_file = open(os.path.splitext(filepath)[0] + ".skeleton", 'wb')
 			skeleton_file = open(os.path.join(model_path, model_name + ".skeleton"), 'wb')
@@ -302,7 +330,7 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 	mesh_names_list = []
 	mesh_bounds = {}
 	unique_materials_dict = {}
-	vertex_group_boundary_boxes = []
+	deform_bone_coords = defaultdict(list)
 
 	# For bounding sphere
 	model_bounding_sphere = []
@@ -346,15 +374,16 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 			face_table_offset = 0 # Updates after each mesh
 			chunks_face_offset = 0 # Updates after each mesh
 
-			vertex_group_verts = defaultdict(list)
 			mesh_objects = tuple(lod_obj.children)
+			lod_has_color = any(mesh.data.color_attributes.get("COLOR") is not None for mesh in mesh_objects)
+			lod_has_uv1 = any(len(mesh.data.uv_layers) > 1 for mesh in mesh_objects)
 			# Weight buffers are shared by the whole LOD.  They cannot switch
 			# between four and eight entries at a mesh boundary, otherwise all
 			# following vertices are read with the wrong stride by the game.
 			lod_weights_count = 4
 			if armature_obj is not None:
 				lod_weights_count = 8 if any(
-					max((len(vertex.groups) for vertex in mesh.data.vertices), default=0) > 4
+					max((sum(group.weight > 0.0 for group in vertex.groups) for vertex in mesh.data.vertices), default=0) > 4
 					for mesh in mesh_objects
 				) else 4
 			for mesh_obj_index, mesh_obj in enumerate(mesh_objects):
@@ -377,7 +406,7 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 						)
 					# Build vertex groups
 					# ================================================
-					max_num_weights = max([len(v.groups) for v in mesh_data.vertices])
+					max_num_weights = max((sum(group.weight > 0.0 for group in v.groups) for v in mesh_data.vertices), default=0)
 					weights_count = lod_weights_count # one stride for every mesh in this LOD
 					if max_num_weights > 8:
 						raise UserWarning(
@@ -390,13 +419,18 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 					vertex_groups_length = len(mesh_obj.vertex_groups)
 					padding_value = struct.pack('<H', 0)
 					for v_index, v in enumerate(mesh_data.vertices):
+						active_groups = [group for group in v.groups if group.weight > 0.0]
 						# if v.index not in mesh_vert_dict:
 						# 	continue # Make sure we're only processing verts we're exporting
 
 						for n in range(weights_count): # Vertex Groups compiled as sets of 4 or 8
-							if n < len(v.groups): # Existing Groups
-								vgroup_index = v.groups[n].group
-								if vgroup_index >= vertex_groups_length: continue # Skip invalid group index
+							if n < len(active_groups): # Existing Groups
+								influence = active_groups[n]
+								vgroup_index = influence.group
+								if vgroup_index >= vertex_groups_length:
+									raise UserWarning(format_exception(
+										f"Vertex {v.index} on '{mesh_name}' references invalid vertex group {vgroup_index}."
+									))
 								group_name = mesh_obj.vertex_groups[vgroup_index].name
 								bone_index = bone_name_to_index_dict.get(group_name, None)
 								if bone_index is None:
@@ -405,8 +439,9 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 										"Either create the bone or remove the Vertex Group."
 									))
 								
-								weight_group_index = struct.pack('<H', bone_index)
-								weight_group_value = struct.pack('<H', int(v.groups[n].weight * 65535))
+								deform_index = deform_index_by_bone_index[bone_index]
+								weight_group_index = struct.pack('<H', deform_index)
+								weight_group_value = struct.pack('<H', round(influence.weight * 65535))
 								if n<4:
 									weight_id_table.append(weight_group_index)
 									weight_table.append(weight_group_value)
@@ -415,8 +450,8 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 									weight_table_2.append(weight_group_value)
 								
 								# Get Vertex group vertices for bounding boxes
-								if lod_obj_index > 0: continue # Only calculate for first LOD processed.
-								vertex_group_verts[vgroup_index].append(mesh_world_matrix @ v.co)
+								if not is_shadowlod and lod_id == 0:
+									deform_bone_coords[deform_index].append(mesh_world_matrix @ v.co)
 							else:
 								# Pad vertex's weight group list out to full 4 slots with 0's
 								if n<4:
@@ -426,23 +461,6 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 									weight_id_table_2.append(padding_value)
 									weight_table_2.append(padding_value)
 
-					# Calculate Boundary Boxes for each Vertex Group
-					if lod_obj_index == 0: # Only calculate for first LOD processed.
-						for vg_index, vg_coords in sorted(vertex_group_verts.items()):
-							vertex_group_boundary_boxes.append(
-								{
-									"min": {
-										'x': min(v.x for v in vg_coords), 
-										'y': min(v.y for v in vg_coords), 
-										'z': min(v.z for v in vg_coords)
-										},
-									"max": {
-										'x': max(v.x for v in vg_coords), 
-										'y': max(v.y for v in vg_coords), 
-										'z': max(v.z for v in vg_coords)
-										}
-								}
-							)
 				# ======== End of Armature related stuff ========
 
 				print(f"4b. Elapsed time: {time.perf_counter() - export_section_timer_start:.6f} seconds | LOD{lod_obj_index}_{mesh_obj.name} - Build Weights")
@@ -460,16 +478,18 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 
 				for v in mesh_data.vertices:
 					# VERTEX COLORS
-					if color_layer:
-						r = int(color_layer.data[v.index].color[0] * 255)
-						g = int(color_layer.data[v.index].color[1] * 255)
-						b = int(color_layer.data[v.index].color[2] * 255)
-						a = int(color_layer.data[v.index].color[3] * 255)
+					if lod_has_color:
+						color = color_layer.data[v.index].color if color_layer else (1.0, 1.0, 1.0, 1.0)
+						r = int(color[0] * 255)
+						g = int(color[1] * 255)
+						b = int(color[2] * 255)
+						a = int(color[3] * 255)
 						vertex_colors_table.append(struct.pack('<BBBB', r, g, b, a))
 
 					# TEXTURE COORDINATES
-					if uv1_coords:
-						tex_coords_table.append(struct.pack('<ee', uv1_coords[v.index][0], uv1_coords[v.index][1]))
+					if lod_has_uv1:
+						uv1 = uv1_coords[v.index] if uv1_coords and uv1_coords[v.index] else (0.0, 0.0)
+						tex_coords_table.append(struct.pack('<ee', uv1[0], uv1[1]))
 
 					# CALCULATE BOUNDING SPHERE
 					if lod_obj_index > 0: continue # Only calculate for first LOD
@@ -575,6 +595,21 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 
 				print(f"LOD{lod_obj_index} - {mesh_obj.name} done processing!")
 
+			vertex_count = len(vert_table)
+			if armature_obj is not None:
+				expected_weight_entries = vertex_count * 4
+				for label, table in (("BLENDINDICES", weight_id_table), ("BLENDWEIGHT", weight_table)):
+					if len(table) != expected_weight_entries:
+						raise RuntimeError(f"LOD{lod_id}: {label} has {len(table)} entries; expected {expected_weight_entries}")
+				if lod_weights_count == 8:
+					for label, table in (("BLENDINDICES_2", weight_id_table_2), ("BLENDWEIGHT_2", weight_table_2)):
+						if len(table) != expected_weight_entries:
+							raise RuntimeError(f"LOD{lod_id}: {label} has {len(table)} entries; expected {expected_weight_entries}")
+			if vertex_colors_table and len(vertex_colors_table) != vertex_count:
+				raise RuntimeError(f"LOD{lod_id}: COLOR has {len(vertex_colors_table)} entries; expected {vertex_count}")
+			if tex_coords_table and len(tex_coords_table) != vertex_count:
+				raise RuntimeError(f"LOD{lod_id}: TEXCOORD has {len(tex_coords_table)} entries; expected {vertex_count}")
+
 			# Write .mmesh Buffers
 			# ================================================
 			# Write Vertex Table to Mesh Buffer
@@ -639,6 +674,16 @@ def write_some_data(context, filepath, export_scale:float, create_model_subfolde
 				mmesh_file.close()
 				del mmesh_file
 			except: pass # If file was not defined, disregard
+
+	vertex_group_boundary_boxes = []
+	for deform_index in range(len(deform_bones_table)):
+		coords = deform_bone_coords.get(deform_index)
+		if coords:
+			minimum = {axis: min(getattr(value, axis) for value in coords) for axis in ('x', 'y', 'z')}
+			maximum = {axis: max(getattr(value, axis) for value in coords) for axis in ('x', 'y', 'z')}
+		else:
+			minimum = maximum = {'x': 0.0, 'y': 0.0, 'z': 0.0}
+		vertex_group_boundary_boxes.append({'min': minimum, 'max': maximum})
 
 	# Build minfo Data Table
 	# ================================================
