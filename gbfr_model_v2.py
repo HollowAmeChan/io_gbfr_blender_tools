@@ -460,7 +460,9 @@ def read_some_data(
 							vert_idx = 2
 							for loop in bmesh_face.loops:
 								loop[UV0_Layer].uv = UV0Table[face[vert_idx]]
-								if UV1Table: loop[UV1_Layer].uv = UV1Table[face[vert_idx]]
+								if UV1Table:
+									uv1_index = face[vert_idx]
+									loop[UV1_Layer].uv = UV1Table[uv1_index] if uv1_index < len(UV1Table) else (0.0, 0.0)
 								normals.append(NormalTable[face[vert_idx]])
 								vert_idx -= 1
 							# Assign Materials
@@ -493,8 +495,8 @@ def read_some_data(
 			# Assign additional vertex data buffers
 			for v, vert in enumerate(VertsCreationOrderList):
 				if ColorTable: # Assign Vertex colors
-					mesh_data.color_attributes[f"COLOR"].data[v].color = ColorTable[vert]
-				if armature and WeightIndicesTable: # Create Vertex groups and assign weights
+					mesh_data.color_attributes[f"COLOR"].data[v].color = ColorTable[vert] if vert < len(ColorTable) else (1.0, 1.0, 1.0, 1.0)
+				if armature and vert < len(WeightIndicesTable) and vert < len(WeightValuesTable): # Create Vertex groups and assign weights
 					for n in range(len(WeightIndicesTable[vert])): # 4 or 8
 						try:
 							bone_index = WeightIndicesTable[vert][n]
