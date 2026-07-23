@@ -139,13 +139,35 @@ def _install_workspace_export(staging_root, targets):
                 pass
 
 
-def _validate_skeleton_contract(root, reference_path):
+def _validate_skeleton_contract(root, reference_path, preserve_reference_skeleton=False):
     if reference_path is None:
         return
     if root.type != "ARMATURE":
         raise RuntimeError("源资源包含 skeleton，但当前导出根对象不是骨架")
 
     reference = ModelSkeleton.GetRootAs(bytearray(Path(reference_path).read_bytes()), 0)
+    if preserve_reference_skeleton:
+        reference_names = {
+            reference.Body(index).Name().decode("utf-8")
+            for index in range(reference.BodyLength())
+        }
+        missing_groups = set()
+        for lod_object in root.children:
+            for mesh_object in lod_object.children:
+                if mesh_object.type != "MESH":
+                    continue
+                for vertex in mesh_object.data.vertices:
+                    for influence in vertex.groups:
+                        if influence.weight <= 0.0 or influence.group >= len(mesh_object.vertex_groups):
+                            continue
+                        group_name = mesh_object.vertex_groups[influence.group].name
+                        if group_name not in reference_names:
+                            missing_groups.add(group_name)
+        if missing_groups:
+            detail = ", ".join(sorted(missing_groups)[:8])
+            raise RuntimeError(f"FP 头部存在 source skeleton 未定义的加权顶点组: {detail}")
+        return
+
     current_bones = gbfr_model_export_v2.ordered_export_bones(root, reference)
     current_index_by_name = {bone.name: index for index, bone in enumerate(current_bones)}
     problems = []
@@ -259,7 +281,11 @@ class ExportSomeData(Operator, ImportHelper):
         try:
             targets = resolve_model_export_targets(self.filepath, state.model_id)
             if self.strict_skeleton_contract:
-                _validate_skeleton_contract(root, targets.reference_skeleton)
+                _validate_skeleton_contract(
+                    root,
+                    targets.reference_skeleton,
+                    preserve_reference_skeleton=targets.model_id.lower().startswith("fp"),
+                )
             export_scene = bpy.data.scenes.new(name=f"GBFR Export | {state.model_id}")
             export_collection = bpy.data.collections.new(name="Model")
             export_scene.collection.children.link(export_collection)

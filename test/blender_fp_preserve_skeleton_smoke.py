@@ -15,6 +15,7 @@ bpy.ops.preferences.addon_enable(module="io_gbfr_blender_tools")
 assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINISHED"}
 
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
+from io_gbfr_blender_tools.gbfr_export import _validate_skeleton_contract
 from io_gbfr_blender_tools.gbfr_model_export_v2 import write_some_data
 from io_gbfr_blender_tools.gbfr_session import active_session_root
 
@@ -23,6 +24,7 @@ assert root is not None and root.type == "ARMATURE"
 # The source contains this non-deform dummy, but Blender drops its near-zero
 # scale while applying the imported rest pose.
 assert root.data.bones.get("_8d0") is None
+_validate_skeleton_contract(root, skeleton, preserve_reference_skeleton=True)
 
 with tempfile.TemporaryDirectory(prefix="gbfr_fp_preserve_") as temporary:
     output = Path(temporary) / "fp1400.minfo"
