@@ -67,8 +67,6 @@ def object_session_collection(obj, scene=None):
 def active_session_collection(context):
     selected = object_session_collection(context.object, context.scene)
     if selected is not None:
-        if context.scene.gbfr_workspace.active_session != selected:
-            context.scene.gbfr_workspace.active_session = selected
         return selected
     collection = context.scene.gbfr_workspace.active_session
     if collection is not None and collection in session_collections(context.scene):

@@ -31,6 +31,14 @@ assert pl_session.gbfr_session.armature != fp_session.gbfr_session.armature
 assert pl_session.gbfr_session.mesh != fp_session.gbfr_session.mesh
 assert bpy.context.scene.gbfr_workspace.active_session == fp_session
 
+# Session lookup is used by Blender poll callbacks and must never mutate Scene data.
+for selected in bpy.context.selected_objects:
+    selected.select_set(False)
+pl_session.gbfr_session.armature.select_set(True)
+bpy.context.view_layer.objects.active = pl_session.gbfr_session.armature
+assert active_session_collection(bpy.context) == pl_session
+assert bpy.context.scene.gbfr_workspace.active_session == fp_session
+
 custom_collection = bpy.data.collections.new("User Replacement Assets")
 bpy.context.scene.collection.children.link(custom_collection)
 custom_mesh = bpy.data.meshes.new("UserMesh")
