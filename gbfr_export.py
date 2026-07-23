@@ -236,7 +236,10 @@ class ExportSomeData(Operator, ImportHelper):
             box.label(text=str(target.relative_to(targets.workspace_root)), icon="FILE")
         box.label(text="不会写入 build；minfo 由 v2 构建器直接生成", icon="INFO")
         if targets.reference_skeleton is not None:
-            box.label(text="源骨骼索引保持不变；融合新增骨骼统一追加到末尾", icon="LOCKED")
+            if targets.model_id.lower().startswith("fp"):
+                box.label(text="FP 头部直接保留 source skeleton；Blender 缺失的非蒙皮占位骨不会阻止导出", icon="LOCKED")
+            else:
+                box.label(text="源骨骼索引保持不变；融合新增骨骼统一追加到末尾", icon="LOCKED")
         if self.experimental_rename_new_bones:
             box.label(text="实验模式：白名单优先 _xxx → _cxx → _axx → _dxx，只改名不改父子关系", icon="INFO")
         if self.fill_missing_lods:
@@ -278,6 +281,7 @@ class ExportSomeData(Operator, ImportHelper):
                     True,
                     reference_skeleton_path=targets.reference_skeleton,
                     experimental_rename_new_bones=self.experimental_rename_new_bones,
+                    preserve_reference_skeleton=targets.model_id.lower().startswith("fp"),
                 )
                 _install_workspace_export(staging_root, targets)
 

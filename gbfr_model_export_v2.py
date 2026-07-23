@@ -299,6 +299,7 @@ def write_some_data(
 	create_model_subfolders: bool,
 	reference_skeleton_path=None,
 	experimental_rename_new_bones: bool = False,
+	preserve_reference_skeleton: bool = False,
 ):
 	total_export_timer_start = time.perf_counter()
 	export_section_timer_start = time.perf_counter() # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
@@ -401,21 +402,31 @@ def write_some_data(
 	deform_bones_table = []
 	if armature_obj:
 		reference_skeleton = None
+		reference_buffer = None
 		if reference_skeleton_path:
 			with open(reference_skeleton_path, "rb") as reference_file:
 				reference_buffer = bytearray(reference_file.read())
 			reference_skeleton = ModelSkeleton.GetRootAs(reference_buffer, 0)
-		if experimental_rename_new_bones:
+		if preserve_reference_skeleton and reference_skeleton is None:
+			raise RuntimeError("保留源 skeleton 需要有效的 reference skeleton")
+		if experimental_rename_new_bones and not preserve_reference_skeleton:
 			renamed_bones = rename_new_bones_for_experimental_export(
 				armature_obj, mesh_objects, reference_skeleton
 			)
 			for old_name, new_name in renamed_bones:
 				print(f"Experimental appended bone rename: {old_name} -> {new_name}")
-		export_bones = ordered_export_bones(armature_obj, reference_skeleton)
-		bone_name_to_index_dict = {bone.name: i for i, bone in enumerate(export_bones)}
+		if preserve_reference_skeleton:
+			bone_name_to_index_dict = {
+				reference_skeleton.Body(index).Name().decode("utf-8"): index
+				for index in range(reference_skeleton.BodyLength())
+			}
+			export_bones = None
+		else:
+			export_bones = ordered_export_bones(armature_obj, reference_skeleton)
+			bone_name_to_index_dict = {bone.name: i for i, bone in enumerate(export_bones)}
 		# The game keeps skeleton bone 0 as the deform root even when no vertex
 		# is directly weighted to it.
-		used_bone_indices = {0} if export_bones else set()
+		used_bone_indices = {0} if bone_name_to_index_dict else set()
 		for mesh_obj in mesh_objects:
 			for vertex in mesh_obj.data.vertices:
 				for influence in vertex.groups:
@@ -438,24 +449,27 @@ def write_some_data(
 			bone_index: deform_index
 			for deform_index, bone_index in enumerate(deform_bones_table)
 		}
-		# Re-encode and rename all the bone groups back to 4-byte little-endian ASCII uints
-		# ================================================
-		bone_groups = armature_obj.data.collections if bpy.app.version >= (4, 0, 0) else armature_obj.pose.bone_groups
-		for bone_group in bone_groups:
-			try:
-				bone_group.name = encode_bone_group_name(bone_group.name)
-				print("Renamed bone group to:", bone_group.name)
-			except:
-				raise ValueError(
-					format_exception(f"Bone group name '{bone_group.name}' is invalid.\n" 
-					+ "When exporting to GBFR, Bone group names can only\n"
-					+ "consist only of alphanumeric characters, no unicode (i.e. japanese symbols).\n"
-					+ "Group names will also be truncated to 4 bytes, starting with an '_'.")
-					)
+		if preserve_reference_skeleton:
+			skeleton_buffer = reference_buffer
+			print(f"Preserved reference skeleton: {reference_skeleton.BodyLength()} bones")
+		else:
+			# Re-encode and rename all the bone groups back to 4-byte little-endian ASCII uints
+			bone_groups = armature_obj.data.collections if bpy.app.version >= (4, 0, 0) else armature_obj.pose.bone_groups
+			for bone_group in bone_groups:
+				try:
+					bone_group.name = encode_bone_group_name(bone_group.name)
+					print("Renamed bone group to:", bone_group.name)
+				except:
+					raise ValueError(
+						format_exception(f"Bone group name '{bone_group.name}' is invalid.\n"
+						+ "When exporting to GBFR, Bone group names can only\n"
+						+ "consist only of alphanumeric characters, no unicode (i.e. japanese symbols).\n"
+						+ "Group names will also be truncated to 4 bytes, starting with an '_'.")
+						)
+			skeleton_buffer, deform_bones_table = build_skeleton(armature_obj, deform_bones_table, export_bones)
 
 		# Save skeleton_buffer output to .skeleton file
 		# ================================================
-		skeleton_buffer, deform_bones_table = build_skeleton(armature_obj, deform_bones_table, export_bones)
 		try:
 			# skeleton_file = open(os.path.splitext(filepath)[0] + ".skeleton", 'wb')
 			skeleton_file = open(os.path.join(model_path, model_name + ".skeleton"), 'wb')
