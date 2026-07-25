@@ -1,4 +1,5 @@
 import bpy
+import math
 import struct
 import os
 import time
@@ -259,6 +260,30 @@ def build_skeleton(armature_obj, deform_joints_table=None, export_bones=None):
 
 	return skeleton_builder.Output(), DeformJointsTable
 
+def orthonormalize_tangent(normal, tangent):
+	"""Return a finite unit tangent perpendicular to the exported normal."""
+	n = Vector(normal)
+	t = Vector(tangent)
+	if n.length_squared > 1e-20 and all(math.isfinite(value) for value in n):
+		if all(math.isfinite(value) for value in t):
+			t -= n * (t.dot(n) / n.length_squared)
+			if t.length_squared > 1e-20:
+				t.normalize()
+				return t
+
+		# Degenerate UV triangles can leave Blender without a usable tangent.
+		# Pick the least-aligned cardinal axis to build a stable fallback.
+		axis_index = min(range(3), key=lambda index: abs(n[index]))
+		axis = Vector((1.0 if axis_index == 0 else 0.0,
+			1.0 if axis_index == 1 else 0.0,
+			1.0 if axis_index == 2 else 0.0))
+		t = n.cross(axis)
+		t.normalize()
+		return t
+
+	return Vector((1.0, 0.0, 0.0))
+
+
 def build_mesh_vert_dictionary(mesh_data):
 	uv_data = mesh_data.uv_layers.active.data
 	mesh_vert_table = {}
@@ -269,12 +294,13 @@ def build_mesh_vert_dictionary(mesh_data):
 				continue
 			v = mesh_data.vertices[vert_id]
 			loop = mesh_data.loops[loop_id]
+			tangent = orthonormalize_tangent(loop.normal, loop.tangent)
 			vert_buffer = []
 			vert_buffer.append(struct.pack('<fff', v.undeformed_co[0], v.undeformed_co[1], v.undeformed_co[2]))
 			vert_buffer.append(struct.pack('<eee', -loop.normal[0], -loop.normal[1], -loop.normal[2]))
 			vert_buffer.append(b'\x00')
 			vert_buffer.append(b'\x00')
-			vert_buffer.append(struct.pack('<eee', loop.tangent[0], loop.tangent[1], loop.tangent[2]))
+			vert_buffer.append(struct.pack('<eee', tangent[0], tangent[1], tangent[2]))
 			vert_buffer.append(struct.pack('<e', -loop.bitangent_sign))
 			uv = uv_data[loop_id].uv
 			vert_buffer.append(struct.pack('<ee', uv[0], uv[1]))
