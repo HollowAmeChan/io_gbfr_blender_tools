@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import re
 import subprocess
 
 import bpy
@@ -20,7 +21,10 @@ from .gbfr_cloth_format import (
     CLP_HEADER_FLOATS, CLP_HEADER_INTS, ClhCollision, ClhDocument,
     ClpDocument, ClpNode, MISSING_BONE, load_clh, load_clp, write_clh, write_clp,
 )
-from .gbfr_workspace import ModelBundle, resolve_model_bundle
+from .gbfr_cloth_tools import PRESETS, SelectedBone, delete_nodes, generate_nodes, preset, rebuild_nodes
+from .gbfr_model_export_v2 import appended_bone_export_name_map, export_bone_name
+from .Entities.ModelSkeleton import ModelSkeleton
+from .gbfr_workspace import ModelBundle, resolve_model_bundle, resolve_model_export_targets
 from .gbfr_cloth_metadata import CLP_HEADER_GROUPS, CLP_HEADER_UI
 from .gbfr_session import active_session_armature
 from .utils import bone_names_mapping
@@ -41,11 +45,21 @@ def _bone_id(bone) -> int | None:
 
 
 def _bone_map(armature):
-    return {
+    mapping = {
         bone_id: bone.name
         for bone in armature.data.bones
         if (bone_id := _bone_id(bone)) is not None
     }
+    state = getattr(armature, "gbfr_cloth", None)
+    if state is not None:
+        for group in state.clp_groups:
+            for node in group.nodes:
+                for raw_attr in ("bone", "up", "down", "side", "poly", "fix"):
+                    bone_id = int(getattr(node, raw_attr))
+                    bone_name = str(getattr(node, raw_attr + "_ref", "") or "")
+                    if bone_name and bone_id not in {-1, MISSING_BONE}:
+                        mapping[bone_id] = bone_name
+    return mapping
 
 
 def _bone_display(armature, bone_id: int) -> str:
@@ -148,6 +162,15 @@ CLH_COLLISION_SECTION_ITEMS = (
     ("STATE", "状态", "编辑运行状态开关"),
     ("RAW", "原始字段", "检查只读原始编码"),
 )
+
+CLP_TOOL_PRESET_ITEMS = tuple(
+    (value.key, value.label, f"使用 {value.label} 的 pl1400 参数曲线")
+    for value in PRESETS
+)
+
+
+def _clp_tool_preset_update(owner, _context):
+    owner.clp_tool_topology = preset(owner.clp_tool_preset).topology
 
 
 class GBFRClpNodeProperties(PropertyGroup):
@@ -260,6 +283,19 @@ class GBFRClothStateProperties(PropertyGroup):
     clp_header_section: EnumProperty(name="参数分类", default="SECTION_0", items=CLP_HEADER_SECTION_ITEMS)
     clp_node_section: EnumProperty(name="节点属性", default="TOPOLOGY", items=CLP_NODE_SECTION_ITEMS)
     clh_collision_section: EnumProperty(name="碰撞属性", default="SHAPE", items=CLH_COLLISION_SECTION_ITEMS)
+    clp_tool_preset: EnumProperty(
+        name="物理预设", default="SKIRT", items=CLP_TOOL_PRESET_ITEMS,
+        update=_clp_tool_preset_update,
+    )
+    clp_tool_topology: EnumProperty(
+        name="连接方式", default="GRID",
+        items=(
+            ("GRID", "横向网格", "按 root 名排序并连接相同深度"),
+            ("CHAINS", "独立骨链", "只生成真实父子纵向连接"),
+        ),
+    )
+    clp_tool_closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
+    clp_tool_apply_header: BoolProperty(name="套用组参数", default=True, description="同时把预设的 Header 参数写入当前 CLP 组")
     last_status: StringProperty(name="状态")
 
 
@@ -312,6 +348,72 @@ def _refresh_collision_references(layer, armature) -> None:
         value.suspend_reference_updates = False
 
 
+_EXPORTED_BONE_RE = re.compile(r"^_([0-9a-fA-F]{3})$")
+
+
+def _export_bone_ids(armature, state) -> dict[str, int]:
+    targets = resolve_model_export_targets(state.workspace_path, state.model_id)
+    if targets.reference_skeleton is None:
+        raise RuntimeError("CLP 创建需要工作区 source skeleton")
+    reference = ModelSkeleton.GetRootAs(bytearray(targets.reference_skeleton.read_bytes()), 0)
+    mesh_objects = [value for value in armature.children_recursive if value.type == "MESH"]
+    appended = appended_bone_export_name_map(armature, mesh_objects, reference)
+    result: dict[str, int] = {}
+    used: dict[int, str] = {}
+    for bone in armature.data.bones:
+        final_name = appended.get(bone.name, export_bone_name(bone))
+        match = _EXPORTED_BONE_RE.fullmatch(final_name)
+        if match is None:
+            continue
+        bone_id = int(match.group(1), 16)
+        previous = used.get(bone_id)
+        if previous is not None and previous != bone.name:
+            raise RuntimeError(f"导出骨号重复: {previous} / {bone.name} -> {final_name}")
+        used[bone_id] = bone.name
+        result[bone.name] = bone_id
+    return result
+
+
+def _export_bone_mapping(armature, state) -> tuple[dict[str, int], dict[int, str]]:
+    by_name = _export_bone_ids(armature, state)
+    return by_name, {bone_id: name for name, bone_id in by_name.items()}
+
+
+def _selected_bones(armature, by_name: dict[str, int], selected_only=True) -> list[SelectedBone]:
+    result = []
+    for bone in armature.data.bones:
+        if selected_only and not bone.select:
+            continue
+        bone_id = by_name.get(bone.name)
+        if bone_id is None:
+            if selected_only:
+                raise RuntimeError(f"骨骼 {bone.name} 无法映射为模型导出的 _xxx 编号")
+            continue
+        result.append(SelectedBone(
+            name=bone.name,
+            bone_id=bone_id,
+            parent_name=bone.parent.name if bone.parent else None,
+        ))
+    return result
+
+
+def _replace_group_nodes(group, values, bone_mapping: dict[int, str]) -> None:
+    group.nodes.clear()
+    for value in values:
+        _copy_node(group.nodes.add(), value, bone_mapping)
+    group.active_node_index = min(group.active_node_index, max(0, len(group.nodes) - 1))
+
+
+def _apply_preset_header(group, value) -> None:
+    for xml_name, item in value.header.items():
+        if xml_name == "gravityVec_":
+            group.gravity_vector = item
+            continue
+        attr = _header_attr(xml_name)
+        if hasattr(group, attr):
+            setattr(group, attr, item)
+
+
 def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> None:
     state = armature.gbfr_cloth
     state.enabled = False
@@ -326,7 +428,10 @@ def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> Non
     if addon is not None:
         preference_path = str(getattr(addon.preferences, "gbfr_data_tools_path", "") or "")
     state.data_tools_path = preference_path if Path(preference_path).is_file() else str(bundle.data_tools or "")
-    bone_mapping = _bone_map(armature)
+    try:
+        _by_name, bone_mapping = _export_bone_mapping(armature, state)
+    except Exception:
+        bone_mapping = _bone_map(armature)
     for record in bundle.cloth_files:
         if record.category == "clp":
             document = load_clp(record.xml)
@@ -456,6 +561,135 @@ class GBFR_OT_ClothExport(Operator):
         return {"FINISHED"}
 
 
+class GBFR_OT_ClpCreateFromSelection(Operator):
+    bl_idname = "gbfr.clp_create_from_selection"
+    bl_label = "从所选骨链创建 CLP"
+    bl_description = "按真实父子层级、root 名顺序和物理预设立即创建可编辑节点"
+    bl_options = {"REGISTER", "UNDO"}
+
+    replace_existing: BoolProperty(default=False, options={"SKIP_SAVE"})
+
+    def execute(self, context):
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        if not state or not state.enabled or not state.clp_groups:
+            self.report({"ERROR"}, "请先载入包含 CLP 的模型工作区")
+            return {"CANCELLED"}
+        group = state.clp_groups[state.active_clp_index]
+        try:
+            by_name, bone_mapping = _export_bone_mapping(armature, state)
+            selected = _selected_bones(armature, by_name)
+            generated, selected_preset, chains = generate_nodes(
+                selected,
+                state.clp_tool_preset,
+                state.clp_tool_topology,
+                state.clp_tool_closed,
+            )
+            current = [] if self.replace_existing else [_node_value(value) for value in group.nodes]
+            current_ids = {value.bone for value in current}
+            duplicates = [value.bone for value in generated if value.bone in current_ids]
+            if duplicates:
+                names = ", ".join(bone_mapping.get(value, f"_{value:03x}") for value in duplicates[:8])
+                raise ValueError(f"当前 CLP 已包含所选节点: {names}")
+            _replace_group_nodes(group, current + generated, bone_mapping)
+            if state.clp_tool_apply_header:
+                _apply_preset_header(group, selected_preset)
+            group.active_node_index = len(current)
+            action = "替换" if self.replace_existing else "添加"
+            state.last_status = f"已{action} {len(generated)} 个节点 / {len(chains)} 串，尚未写入 XML"
+            self.report({"INFO"}, state.last_status)
+            _tag_redraw()
+            return {"FINISHED"}
+        except Exception as error:
+            state.last_status = str(error)
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+
+
+class GBFR_OT_ClpDeleteSelection(Operator):
+    bl_idname = "gbfr.clp_delete_selection"
+    bl_label = "精准删除所选 CLP 节点"
+    bl_description = "删除当前 CLP 中与所选骨骼对应的节点，并清除所有悬空引用"
+    bl_options = {"REGISTER", "UNDO"}
+
+    include_descendants: BoolProperty(default=False, options={"SKIP_SAVE"})
+
+    def execute(self, context):
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        if not state or not state.enabled or not state.clp_groups:
+            return {"CANCELLED"}
+        group = state.clp_groups[state.active_clp_index]
+        try:
+            by_name, bone_mapping = _export_bone_mapping(armature, state)
+            selected_names = {bone.name for bone in armature.data.bones if bone.select}
+            if not selected_names:
+                raise ValueError("请先选择要从当前 CLP 删除的骨骼")
+            if self.include_descendants:
+                for bone in armature.data.bones:
+                    parent = bone
+                    while parent is not None:
+                        if parent.name in selected_names:
+                            selected_names.add(bone.name)
+                            break
+                        parent = parent.parent
+            remove_ids = {by_name[name] for name in selected_names if name in by_name}
+            values, removed_count, cleared_count = delete_nodes(
+                [_node_value(value) for value in group.nodes], remove_ids,
+            )
+            if removed_count == 0:
+                raise ValueError("当前 CLP 中没有与所选骨骼对应的节点")
+            _replace_group_nodes(group, values, bone_mapping)
+            state.last_status = f"已删除 {removed_count} 个节点并清除 {cleared_count} 个引用，尚未写入 XML"
+            self.report({"INFO"}, state.last_status)
+            _tag_redraw()
+            return {"FINISHED"}
+        except Exception as error:
+            state.last_status = str(error)
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+
+
+class GBFR_OT_ClpRebuildConnections(Operator):
+    bl_idname = "gbfr.clp_rebuild_connections"
+    bl_label = "重建当前 CLP 连接"
+    bl_description = "保留节点物理参数，只按父子层级、root 名顺序和闭合设置重建连接"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        if not state or not state.enabled or not state.clp_groups:
+            return {"CANCELLED"}
+        group = state.clp_groups[state.active_clp_index]
+        if not group.nodes:
+            self.report({"WARNING"}, "当前 CLP 没有节点")
+            return {"CANCELLED"}
+        try:
+            by_name, bone_mapping = _export_bone_mapping(armature, state)
+            bones = _selected_bones(armature, by_name, selected_only=False)
+            mapped_ids = {bone.bone_id for bone in bones}
+            missing = [value.bone for value in group.nodes if value.bone not in mapped_ids]
+            if missing:
+                names = ", ".join(f"_{value:03x}" for value in missing[:8])
+                raise ValueError(f"当前骨架无法解析这些 CLP 节点: {names}")
+            values = rebuild_nodes(
+                [_node_value(value) for value in group.nodes],
+                bones,
+                state.clp_tool_topology,
+                state.clp_tool_closed,
+            )
+            _replace_group_nodes(group, values, bone_mapping)
+            state.last_status = f"已重建 {len(values)} 个节点的连接，物理参数保持不变"
+            self.report({"INFO"}, state.last_status)
+            _tag_redraw()
+            return {"FINISHED"}
+        except Exception as error:
+            state.last_status = str(error)
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+
+
 class GBFR_OT_SelectBoneReference(Operator):
     bl_idname = "gbfr.select_bone_reference"
     bl_label = "选中引用骨骼"
@@ -567,10 +801,12 @@ class GBFR_UL_ClpGroups(UIList):
 class GBFR_UL_ClpNodes(UIList):
     def draw_item(self, context, layout, _data, item, _icon, _active_data, _active_propname, _index):
         armature = _armature(context)
+        node_name = item.bone_ref or _bone_display(armature, item.bone)
+        down_name = item.down_ref or _bone_display(armature, item.down)
         layout.label(
             text=(
-                f"{_bone_display(armature, item.bone)}  ·  "
-                f"下游 {_bone_display(armature, item.down)}"
+                f"{node_name}  ·  "
+                f"下游 {down_name}"
             ),
             icon="BONE_DATA",
         )
@@ -669,7 +905,7 @@ def _draw_clp_node_editor(layout, armature, state, group):
         return
     node = group.nodes[group.active_node_index]
     summary = layout.row(align=True)
-    summary.label(text=f"节点 {_bone_display(armature, node.bone)}", icon="BONE_DATA")
+    summary.label(text=f"节点 {node.bone_ref or _bone_display(armature, node.bone)}", icon="BONE_DATA")
     layout.prop(state, "clp_node_section", text="编辑")
 
     if state.clp_node_section == "TOPOLOGY":
@@ -970,7 +1206,9 @@ def _draw_overlay():
 classes = (
     GBFRClpNodeProperties, GBFRClpGroupProperties, GBFRClhCollisionProperties,
     GBFRClhLayerProperties, GBFRClothStateProperties, GBFR_OT_ClothReload,
-    GBFR_OT_ClothExport, GBFR_OT_SelectBoneReference,
+    GBFR_OT_ClothExport, GBFR_OT_ClpCreateFromSelection,
+    GBFR_OT_ClpDeleteSelection, GBFR_OT_ClpRebuildConnections,
+    GBFR_OT_SelectBoneReference,
     GBFR_OT_ToggleCollisionLayer, GBFR_OT_ClhAddCollision, GBFR_OT_ClhRemoveCollision,
     GBFR_UL_ClpGroups, GBFR_UL_ClpNodes, GBFR_UL_ClhLayers,
     GBFR_UL_ClhCollisions, GBFR_PT_ClothEditor, GBFR_PT_ClpEditor, GBFR_PT_ClhEditor,

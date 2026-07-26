@@ -40,6 +40,8 @@ if "bpy" in locals():
         importlib.reload(gbfr_cloth_format)
     if "gbfr_cloth_metadata" in locals():
         importlib.reload(gbfr_cloth_metadata)
+    if "gbfr_cloth_tools" in locals():
+        importlib.reload(gbfr_cloth_tools)
     if "gbfr_cloth_blender" in locals():
         importlib.reload(gbfr_cloth_blender)
     if "gbfr_sop" in locals():
@@ -64,7 +66,7 @@ from . import (
     gbfr_model_v2, gbfr_model_export_v2, gbfr_minfo_builder,
     gbfr_import, gbfr_export, gbfr_panel, utils, bone_name_mappings,
     gbfr_workspace, gbfr_session, gbfr_workspace_ui,
-    gbfr_cloth_format, gbfr_cloth_metadata, gbfr_cloth_blender,
+    gbfr_cloth_format, gbfr_cloth_metadata, gbfr_cloth_tools, gbfr_cloth_blender,
     gbfr_sop, gbfr_sop_blender,
     gbfr_animation, gbfr_animation_blender,
     gbfr_material, gbfr_material_blender,

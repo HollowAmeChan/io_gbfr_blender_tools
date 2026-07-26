@@ -16,7 +16,17 @@ CLP 列表会直接显示组 ID、节点数和引用的 CLH 层。选择组后�
 
 `useCollisionFlags_` 显示为逐层的 CLH 开关，不再要求手算位掩码；CLH 的 `capsule` 显示为同层碰撞端点引用，留空表示球。已知 Header 与节点字段使用中文名称和用途提示，未完全确认的参数会明确标注。数据版本、原始骨骼编码、碰撞 ID 和位掩码仍可在“原始 Header”或各对象的“原始字段”分类中检查，以便研究和故障排查。
 
-“写入当前”或“全部写入 build”会先更新 `unpack` 中的 XML，再调用 GBFRDataTools 编码到记录指定的 `build` 路径。写回基于原 XML 树更新已知字段，未知节点和属性会保留。CLP 当前不允许创建或删除拓扑节点；CLH 允许添加和删除碰撞端点。
+“写入当前”或“全部写入 build”会先更新 `unpack` 中的 XML，再调用 GBFRDataTools 编码到记录指定的 `build` 路径。写回基于原 XML 树更新已知字段，未知节点和属性会保留。CLP 与 CLH 都允许创建和删除记录；空 CLP 会保留 Header 和组号并把节点数写为 0。
+
+半隐式 CLP 创建与删除位于顶级 `GBFR 实用工具 > CLP 创建工具`，不会在上面的 `Cloth 预览`、`CLP 求解` 和 `CLH 碰撞` 区域增加操作按钮：
+
+- 选择多串骨链后，“添加所选”或“替换当前组”会按真实父子层级计算深度，按 root 骨名排序横向顺序，并把预设曲线立即烘焙为普通可编辑节点。
+- 横向网格可以选择首尾闭合；独立骨链不会生成 `noSide/noPoly`。
+- “删除所选”只删除命中的当前组节点并清除悬空引用；“删除所选及后代”用于整串移除。删除不会重写幸存节点参数，也不会跨过被删父骨桥接。
+- “仅重建连接”按当前父子层级和闭合设置重建拓扑，但保留所有物理数值。
+- 新增骨的 CLP 编号复用模型导出器的 source skeleton 与实验白名单分配器，和模型导出临时副本得到相同 `_xxx` 名称。若模型导出时关闭“实验：新增骨骼使用白名单编号”，新节点将无法与模型骨架一致。
+
+这些操作只修改 Blender 内存中的当前 CLP，支持 Undo。确认连接和参数后再用原有“写入当前”生成 XML/BXM；不满意时也可以重新载入 `unpack`，或在 GBFR Modtools 中从 source 恢复单个 CLP。
 
 纯 Python 测试：
 
@@ -28,6 +38,12 @@ Blender 注册测试：
 
 ```powershell
 blender --background --python test/blender_smoke.py
+```
+
+CLP 创建与模型导出骨号联合测试：
+
+```powershell
+blender --background --python test/blender_clp_tools_smoke.py -- <工作区 source minfo>
 ```
 
 ## SOP 骨骼约束

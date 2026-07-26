@@ -251,6 +251,38 @@ class GBFRToolPanel_RestoredUtilities(bpy.types.Panel):
 			else:
 				panel.label(text="选择骨架，或选择其下的模型。", icon='INFO')
 
+		header, panel = layout.panel("gbfr_utility_clp_create", default_closed=False)
+		header.label(text="CLP 创建工具", icon='PHYSICS')
+		if panel:
+			state = getattr(armature, "gbfr_cloth", None) if armature else None
+			if not state or not state.enabled:
+				panel.label(text="先从工作区中控导入并激活模型会话。", icon='INFO')
+			elif not state.clp_groups:
+				panel.label(text="当前工作区没有可复用的 CLP 槽位。", icon='INFO')
+			else:
+				group = state.clp_groups[state.active_clp_index]
+				panel.label(text=f"当前 CLP {group.group_id} · {len(group.nodes)} 节点", icon='CONSTRAINT_BONE')
+				panel.prop(state, "clp_tool_preset")
+				panel.prop(state, "clp_tool_topology", expand=True)
+				settings = panel.row(align=True)
+				settings.prop(state, "clp_tool_closed", toggle=True, icon='LOOP_FORWARDS')
+				settings.prop(state, "clp_tool_apply_header", toggle=True, icon='PRESET')
+
+				create = panel.row(align=True)
+				add = create.operator("gbfr.clp_create_from_selection", text="添加所选", icon='ADD')
+				add.replace_existing = False
+				replace = create.operator("gbfr.clp_create_from_selection", text="替换当前组", icon='FILE_REFRESH')
+				replace.replace_existing = True
+
+				remove = panel.row(align=True)
+				exact = remove.operator("gbfr.clp_delete_selection", text="删除所选", icon='REMOVE')
+				exact.include_descendants = False
+				subtree = remove.operator("gbfr.clp_delete_selection", text="删除所选及后代", icon='TRASH')
+				subtree.include_descendants = True
+				panel.operator("gbfr.clp_rebuild_connections", text="仅重建连接", icon='NODETREE')
+				if state.last_status:
+					panel.label(text=state.last_status, icon='INFO')
+
 		header, panel = layout.panel("gbfr_utility_mesh", default_closed=False)
 		header.label(text="网格", icon='MESH_DATA')
 		if panel:

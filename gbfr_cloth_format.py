@@ -6,6 +6,7 @@ untouched so newly discovered game fields survive a Blender round trip.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -175,6 +176,20 @@ def _format_vec4(value) -> str:
     return " ".join(_format_float(component) for component in value)
 
 
+def _new_clp_node(template: ET.Element | None = None) -> ET.Element:
+    if template is not None:
+        return copy.deepcopy(template)
+    node = ET.Element("CLOTH_WK")
+    for name in (
+        "dataVersion_", "no", "noUp", "noDown", "noSide", "noPoly", "noFix",
+        "rotLimit", "friction", "gravityBlendRate_", "offset", "originalRate_",
+        "weight_", "thick_", "windForceArea_", "jointScale_", "bAllowChangeScale_",
+        "axisAdjustRate_",
+    ):
+        ET.SubElement(node, name)
+    return node
+
+
 def _atomic_write(tree: ET.ElementTree, path: Path) -> None:
     ET.indent(tree, space="  ")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -205,10 +220,20 @@ def write_clp(document: ClpDocument, path: str | Path | None = None) -> Path:
     if "gravityVec_" in document.header:
         _set(header_node, "gravityVec_", _format_vec4(document.header["gravityVec_"]))
     existing = {_int(node, "no", -1): node for node in list_node.findall("CLOTH_WK")}
+    desired_ids = [int(value.bone) for value in document.nodes]
+    if len(desired_ids) != len(set(desired_ids)):
+        raise ValueError("CLP 节点包含重复骨骼 ID")
+    desired = set(desired_ids)
+    for old_id, node in tuple(existing.items()):
+        if old_id not in desired:
+            list_node.remove(node)
+    template = next(iter(existing.values()), None)
     for value in document.nodes:
         node = existing.get(value.bone)
         if node is None:
-            raise ValueError(f"CLP 节点 {value.bone} 不在原始 XML 中；当前版本不创建拓扑节点")
+            node = _new_clp_node(template)
+            list_node.append(node)
+            existing[value.bone] = node
         integers = {
             "dataVersion_": value.data_version, "no": value.bone, "noUp": value.up,
             "noDown": value.down, "noSide": value.side, "noPoly": value.poly,
@@ -224,6 +249,7 @@ def write_clp(document: ClpDocument, path: str | Path | None = None) -> Path:
         for name, item in integers.items(): _set(node, name, str(int(item)))
         for name, item in floats.items(): _set(node, name, _format_float(item))
         _set(node, "offset", _format_vec4(value.offset))
+    _set(root, "CLOTH_WK_NUM", str(len(document.nodes)))
     _atomic_write(tree, destination)
     return destination
 

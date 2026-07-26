@@ -172,6 +172,28 @@ def _allocate_appended_bone_names(reference_names, occupied_names, count):
 	)
 
 
+def appended_bone_export_name_map(armature_obj, mesh_objects, reference_skeleton):
+	"""Return the exact temporary export names assigned to appended bones."""
+	if reference_skeleton is None:
+		raise RuntimeError("实验性新增骨骼改名需要 reference skeleton。")
+	reference_names = _skeleton_bone_names(reference_skeleton)
+	native_bones = list(armature_obj.data.bones)
+	extra_bones = [
+		bone for bone in native_bones
+		if export_bone_name(bone) not in reference_names
+	]
+	if not extra_bones:
+		return {}
+	reserved_names = {bone.name for bone in native_bones}
+	reserved_names.update(
+		group.name
+		for mesh_obj in mesh_objects
+		for group in mesh_obj.vertex_groups
+	)
+	new_names = _allocate_appended_bone_names(reference_names, reserved_names, len(extra_bones))
+	return {bone.name: new_name for bone, new_name in zip(extra_bones, new_names)}
+
+
 def rename_new_bones_for_experimental_export(armature_obj, mesh_objects, reference_skeleton):
 	"""Rename only non-reference bones/groups on the temporary export copy.
 
@@ -181,22 +203,10 @@ def rename_new_bones_for_experimental_export(armature_obj, mesh_objects, referen
 	if reference_skeleton is None:
 		raise RuntimeError("实验性新增骨骼改名需要 reference skeleton。")
 
-	reference_names = _skeleton_bone_names(reference_skeleton)
-	native_bones = list(armature_obj.data.bones)
-	extra_bones = [
-		bone for bone in native_bones
-		if export_bone_name(bone) not in reference_names
-	]
-	if not extra_bones:
+	name_map = appended_bone_export_name_map(armature_obj, mesh_objects, reference_skeleton)
+	if not name_map:
 		return ()
-
-	reserved_names = {bone.name for bone in native_bones}
-	reserved_names.update(
-		group.name
-		for mesh_obj in mesh_objects
-		for group in mesh_obj.vertex_groups
-	)
-	new_names = _allocate_appended_bone_names(reference_names, reserved_names, len(extra_bones))
+	extra_bones = [bone for bone in armature_obj.data.bones if bone.name in name_map]
 
 	# Blender auto-suffixes duplicate names, so use a collision-free temporary
 	# name for both bones and vertex groups before assigning the final names.
@@ -209,7 +219,7 @@ def rename_new_bones_for_experimental_export(armature_obj, mesh_objects, referen
 			for group in mesh_obj.vertex_groups:
 				if group.name == old_name:
 					group.name = temporary_name
-		final_name = new_names[index]
+		final_name = name_map[old_name]
 		bone.name = final_name
 		for mesh_obj in mesh_objects:
 			for group in mesh_obj.vertex_groups:
