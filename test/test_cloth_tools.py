@@ -39,7 +39,7 @@ class ClothToolTests(unittest.TestCase):
         self.assertEqual(100, by_id[200].side)
         self.assertEqual(200, by_id[300].side)
 
-    def test_independent_chains_split_branching_selection(self):
+    def test_independent_chains_continue_through_longest_branch(self):
         selected = [
             SelectedBone("HairBack_01", 1),
             SelectedBone("HairBack_02", 2, "HairBack_01"),
@@ -48,28 +48,45 @@ class ClothToolTests(unittest.TestCase):
             SelectedBone("HairBack_A_05", 5, "HairBack_A_04"),
             SelectedBone("HairBack_B_04", 6, "HairBack_03"),
             SelectedBone("HairBack_B_05", 7, "HairBack_B_04"),
+            SelectedBone("HairBack_B_06", 8, "HairBack_B_05"),
         ]
-        nodes, _preset, chains = generate_nodes(selected, "LONG_HAIR", "CHAINS", False)
+        nodes, _preset, chains = generate_nodes(selected, "SKIRT", "CHAINS", False)
         self.assertEqual(
             [
-                ["HairBack_01", "HairBack_02", "HairBack_03"],
+                [
+                    "HairBack_01", "HairBack_02", "HairBack_03",
+                    "HairBack_B_04", "HairBack_B_05", "HairBack_B_06",
+                ],
                 ["HairBack_A_04", "HairBack_A_05"],
-                ["HairBack_B_04", "HairBack_B_05"],
             ],
             [[bone.name for bone in chain] for chain in chains],
         )
         by_id = {node.bone: node for node in nodes}
-        self.assertEqual(MISSING_BONE, by_id[3].down)
+        self.assertEqual(6, by_id[3].down)
+        self.assertEqual(3, by_id[6].up)
         self.assertEqual(MISSING_BONE, by_id[4].up)
         self.assertEqual(5, by_id[4].down)
-        self.assertEqual(MISSING_BONE, by_id[6].up)
-        self.assertEqual(7, by_id[6].down)
+        self.assertAlmostEqual(math.radians(90), by_id[8].rotation_limit)
+        self.assertAlmostEqual(math.radians(10), by_id[4].rotation_limit)
+        self.assertLess(by_id[5].rotation_limit, math.radians(90))
         self.assertTrue(all(node.side == MISSING_BONE for node in nodes))
         self.assertTrue(all(node.poly == MISSING_BONE for node in nodes))
         rebuilt = {node.bone: node for node in rebuild_nodes(nodes, selected, "CHAINS", False)}
-        self.assertEqual(MISSING_BONE, rebuilt[3].down)
+        self.assertEqual(6, rebuilt[3].down)
+        self.assertEqual(3, rebuilt[6].up)
         self.assertEqual(MISSING_BONE, rebuilt[4].up)
-        self.assertEqual(MISSING_BONE, rebuilt[6].up)
+
+    def test_equal_length_forks_use_bone_name_as_tiebreaker(self):
+        selected = [
+            SelectedBone("Root", 1),
+            SelectedBone("Branch_B", 2, "Root"),
+            SelectedBone("Branch_A", 3, "Root"),
+        ]
+        _nodes, _preset, chains = generate_nodes(selected, "LONG_HAIR", "CHAINS", False)
+        self.assertEqual(
+            [["Root", "Branch_A"], ["Branch_B"]],
+            [[bone.name for bone in chain] for chain in chains],
+        )
 
     def test_grid_rejects_branching_selection(self):
         selected = [

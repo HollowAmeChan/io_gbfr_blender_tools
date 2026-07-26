@@ -64,7 +64,8 @@ fork_03 = add_fork_bone("CLP_FORK_03", fork_02, 0.05, 3)
 fork_a_04 = add_fork_bone("CLP_FORK_A_04", fork_03, 0.04, 4)
 add_fork_bone("CLP_FORK_A_05", fork_a_04, 0.04, 5)
 fork_b_04 = add_fork_bone("CLP_FORK_B_04", fork_03, 0.06, 4)
-add_fork_bone("CLP_FORK_B_05", fork_b_04, 0.06, 5)
+fork_b_05 = add_fork_bone("CLP_FORK_B_05", fork_b_04, 0.06, 5)
+add_fork_bone("CLP_FORK_B_06", fork_b_05, 0.06, 6)
 bpy.ops.object.mode_set(mode="OBJECT")
 
 for bone in armature.data.bones:
@@ -119,13 +120,13 @@ state.clp_tool_topology = "CHAINS"
 state.clp_tool_closed = False
 assert bpy.ops.gbfr.clp_create_from_selection(replace_existing=True) == {"FINISHED"}
 group = state.clp_groups[state.active_clp_index]
-assert len(group.nodes) == 7
+assert len(group.nodes) == 8
 by_bone = {node.bone: node for node in group.nodes}
-f1, f2, f3, fa4, fa5, fb4, fb5 = (export_ids[name] for name in fork_names)
+f1, f2, f3, fa4, fa5, fb4, fb5, fb6 = (export_ids[name] for name in fork_names)
 assert by_bone[f1].down == f2 and by_bone[f2].down == f3
-assert by_bone[f3].down == 4095
+assert by_bone[f3].down == fb4 and by_bone[fb4].up == f3
 assert by_bone[fa4].up == 4095 and by_bone[fa4].down == fa5
-assert by_bone[fb4].up == 4095 and by_bone[fb4].down == fb5
+assert by_bone[fb4].down == fb5 and by_bone[fb5].down == fb6
 assert all(node.side == 4095 and node.poly == 4095 for node in group.nodes)
 
 rename_records = dict(rename_new_bones_for_experimental_export(armature, mesh_objects, source_skeleton))

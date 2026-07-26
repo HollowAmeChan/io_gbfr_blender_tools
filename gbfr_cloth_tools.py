@@ -222,9 +222,20 @@ def build_chains(selected: Iterable[SelectedBone], allow_branches: bool = False)
         raise ValueError("所选骨骼没有 root；请检查父子关系是否形成循环")
     chains: list[list[SelectedBone]] = []
     visited: set[str] = set()
+    path_lengths: dict[str, int] = {}
+
+    def longest_path_length(value: SelectedBone) -> int:
+        cached = path_lengths.get(value.name)
+        if cached is not None:
+            return cached
+        value_children = children[value.name]
+        length = 1 + max((longest_path_length(child) for child in value_children), default=0)
+        path_lengths[value.name] = length
+        return length
 
     def append_segment(start: SelectedBone) -> None:
         chain: list[SelectedBone] = []
+        deferred_branches: list[SelectedBone] = []
         current: SelectedBone | None = start
         while current is not None:
             if current.name in visited:
@@ -238,11 +249,15 @@ def build_chains(selected: Iterable[SelectedBone], allow_branches: bool = False)
             names = ", ".join(child.name for child in current_children)
             if not allow_branches:
                 raise ValueError(f"骨链 {current.name} 出现分叉: {names}")
-            chains.append(chain)
-            for child in current_children:
-                append_segment(child)
-            return
+            continuation = sorted(
+                current_children,
+                key=lambda child: (-longest_path_length(child), child.name),
+            )[0]
+            deferred_branches.extend(child for child in current_children if child is not continuation)
+            current = continuation
         chains.append(chain)
+        for child in deferred_branches:
+            append_segment(child)
 
     for root in sorted(roots, key=lambda item: item.name):
         append_segment(root)
