@@ -173,6 +173,10 @@ def _clp_tool_preset_update(owner, _context):
     owner.clp_tool_topology = preset(owner.clp_tool_preset).topology
 
 
+def _clp_create_preset_update(owner, _context):
+    owner.topology = preset(owner.preset_key).topology
+
+
 class GBFRClpNodeProperties(PropertyGroup):
     suspend_reference_updates: BoolProperty(default=False, options={"HIDDEN"})
     data_version: IntProperty(name="数据版本", default=2, description="节点结构版本；通常不需要修改")
@@ -295,7 +299,6 @@ class GBFRClothStateProperties(PropertyGroup):
         ),
     )
     clp_tool_closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
-    clp_tool_apply_header: BoolProperty(name="套用组参数", default=False, description="同时把预设的 Header 参数写入当前 CLP 组")
     last_status: StringProperty(name="状态")
 
 
@@ -568,6 +571,46 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     replace_existing: BoolProperty(default=False, options={"SKIP_SAVE"})
+    preset_key: EnumProperty(
+        name="物理预设", default="SKIRT", items=CLP_TOOL_PRESET_ITEMS,
+        update=_clp_create_preset_update,
+    )
+    topology: EnumProperty(
+        name="连接方式", default="GRID",
+        items=(
+            ("GRID", "横向网格", "按 root 名排序并连接相同深度"),
+            ("CHAINS", "独立骨链", "只生成真实父子纵向连接"),
+        ),
+    )
+    closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
+    apply_header: BoolProperty(name="套用组参数", default=False, description="同时把预设的 Header 参数写入当前 CLP 组")
+
+    def invoke(self, context, _event):
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        if not state or not state.enabled or not state.clp_groups:
+            self.report({"ERROR"}, "请先载入包含 CLP 的模型工作区")
+            return {"CANCELLED"}
+        self.preset_key = state.clp_tool_preset
+        self.topology = state.clp_tool_topology
+        self.closed = state.clp_tool_closed
+        self.apply_header = False
+        return context.window_manager.invoke_props_dialog(self, width=420)
+
+    def draw(self, context):
+        layout = self.layout
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        group_id = state.clp_groups[state.active_clp_index].group_id if state and state.clp_groups else -1
+        action = "替换" if self.replace_existing else "添加"
+        layout.label(text=f"{action}到 CLP {group_id}", icon='CONSTRAINT_BONE')
+        if self.replace_existing:
+            layout.label(text="将清空当前组的全部节点", icon='ERROR')
+        layout.prop(self, "preset_key")
+        layout.prop(self, "topology", expand=True)
+        if self.topology == "GRID":
+            layout.prop(self, "closed", toggle=True, icon='LOOP_FORWARDS')
+        layout.prop(self, "apply_header", toggle=True, icon='PRESET')
 
     def execute(self, context):
         armature = _armature(context)
@@ -581,10 +624,13 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             selected = _selected_bones(armature, by_name)
             generated, selected_preset, chains = generate_nodes(
                 selected,
-                state.clp_tool_preset,
-                state.clp_tool_topology,
-                state.clp_tool_closed,
+                self.preset_key,
+                self.topology,
+                self.closed,
             )
+            state.clp_tool_preset = self.preset_key
+            state.clp_tool_topology = self.topology
+            state.clp_tool_closed = self.closed
             current = [] if self.replace_existing else [_node_value(value) for value in group.nodes]
             current_ids = {value.bone for value in current}
             duplicates = [value.bone for value in generated if value.bone in current_ids]
@@ -592,7 +638,7 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
                 names = ", ".join(bone_mapping.get(value, f"_{value:03x}") for value in duplicates[:8])
                 raise ValueError(f"当前 CLP 已包含所选节点: {names}")
             _replace_group_nodes(group, current + generated, bone_mapping)
-            if state.clp_tool_apply_header:
+            if self.apply_header:
                 _apply_preset_header(group, selected_preset)
             group.active_node_index = len(current)
             action = "替换" if self.replace_existing else "添加"
@@ -646,6 +692,30 @@ class GBFR_OT_ClpRebuildConnections(Operator):
     bl_description = "保留节点物理参数，只按父子层级、root 名顺序和闭合设置重建连接"
     bl_options = {"REGISTER", "UNDO"}
 
+    topology: EnumProperty(
+        name="连接方式", default="GRID",
+        items=(
+            ("GRID", "横向网格", "按 root 名排序并连接相同深度"),
+            ("CHAINS", "独立骨链", "只生成真实父子纵向连接"),
+        ),
+    )
+    closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
+
+    def invoke(self, context, _event):
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        if not state or not state.enabled or not state.clp_groups:
+            return {"CANCELLED"}
+        self.topology = state.clp_tool_topology
+        self.closed = state.clp_tool_closed
+        return context.window_manager.invoke_props_dialog(self, width=360)
+
+    def draw(self, _context):
+        layout = self.layout
+        layout.prop(self, "topology", expand=True)
+        if self.topology == "GRID":
+            layout.prop(self, "closed", toggle=True, icon='LOOP_FORWARDS')
+
     def execute(self, context):
         armature = _armature(context)
         state = armature.gbfr_cloth if armature else None
@@ -666,10 +736,12 @@ class GBFR_OT_ClpRebuildConnections(Operator):
             values = rebuild_nodes(
                 [_node_value(value) for value in group.nodes],
                 bones,
-                state.clp_tool_topology,
-                state.clp_tool_closed,
+                self.topology,
+                self.closed,
             )
             _replace_group_nodes(group, values, bone_mapping)
+            state.clp_tool_topology = self.topology
+            state.clp_tool_closed = self.closed
             state.last_status = f"已重建 {len(values)} 个节点的连接，物理参数保持不变"
             self.report({"INFO"}, state.last_status)
             _tag_redraw()

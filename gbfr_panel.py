@@ -262,11 +262,6 @@ class GBFRToolPanel_RestoredUtilities(bpy.types.Panel):
 			else:
 				group = state.clp_groups[state.active_clp_index]
 				panel.label(text=f"当前 CLP {group.group_id} · {len(group.nodes)} 节点", icon='CONSTRAINT_BONE')
-				panel.prop(state, "clp_tool_preset")
-				panel.prop(state, "clp_tool_topology", expand=True)
-				settings = panel.row(align=True)
-				settings.prop(state, "clp_tool_closed", toggle=True, icon='LOOP_FORWARDS')
-				settings.prop(state, "clp_tool_apply_header", toggle=True, icon='PRESET')
 
 				create = panel.row(align=True)
 				add = create.operator("gbfr.clp_create_from_selection", text="添加所选", icon='ADD')

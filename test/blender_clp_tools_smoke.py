@@ -28,7 +28,8 @@ from io_gbfr_blender_tools.gbfr_workspace import resolve_model_export_targets
 armature = active_session_armature(bpy.context)
 assert armature is not None and armature.gbfr_cloth.enabled
 state = armature.gbfr_cloth
-assert state.clp_tool_apply_header is False
+create_rna = bpy.ops.gbfr.clp_create_from_selection.get_rna_type()
+assert create_rna.properties["apply_header"].default is False
 targets = resolve_model_export_targets(state.workspace_path, state.model_id)
 source_skeleton = ModelSkeleton.GetRootAs(bytearray(targets.reference_skeleton.read_bytes()), 0)
 
@@ -80,11 +81,13 @@ for name in all_names:
     assert export_ids[name] == int(expected_names[name][1:], 16)
 
 state.active_clp_index = next(index for index, group in enumerate(state.clp_groups) if group.group_id == 2)
-state.clp_tool_preset = "SKIRT"
-state.clp_tool_topology = "GRID"
-state.clp_tool_closed = False
-state.clp_tool_apply_header = True
-assert bpy.ops.gbfr.clp_create_from_selection(replace_existing=True) == {"FINISHED"}
+assert bpy.ops.gbfr.clp_create_from_selection(
+    replace_existing=True,
+    preset_key="SKIRT",
+    topology="GRID",
+    closed=False,
+    apply_header=True,
+) == {"FINISHED"}
 group = state.clp_groups[state.active_clp_index]
 assert len(group.nodes) == 6
 by_bone = {node.bone: node for node in group.nodes}
@@ -94,8 +97,8 @@ assert by_bone[b1].side == a1 and by_bone[b1].poly == a1
 assert by_bone[b2].side == a2 and by_bone[b2].poly == a2
 assert by_bone[c1].side == b1 and by_bone[c2].side == b2
 
-state.clp_tool_closed = True
-assert bpy.ops.gbfr.clp_rebuild_connections() == {"FINISHED"}
+assert bpy.ops.gbfr.clp_rebuild_connections(topology="GRID", closed=True) == {"FINISHED"}
+assert state.clp_tool_topology == "GRID" and state.clp_tool_closed is True
 by_bone = {node.bone: node for node in group.nodes}
 assert by_bone[a1].side == c1 and by_bone[a2].side == c2
 
@@ -109,17 +112,23 @@ assert by_bone[b2].side == 4095 and by_bone[b2].poly == 4095
 
 for bone in armature.data.bones:
     bone.select = bone.name in fork_names
-state.clp_tool_preset = "LONG_HAIR"
-state.clp_tool_topology = "GRID"
 try:
-    bpy.ops.gbfr.clp_create_from_selection(replace_existing=True)
+    bpy.ops.gbfr.clp_create_from_selection(
+        replace_existing=True,
+        preset_key="LONG_HAIR",
+        topology="GRID",
+        closed=False,
+    )
 except RuntimeError as error:
     assert "分叉" in str(error)
 else:
     raise AssertionError("grid topology unexpectedly accepted a fork")
-state.clp_tool_topology = "CHAINS"
-state.clp_tool_closed = False
-assert bpy.ops.gbfr.clp_create_from_selection(replace_existing=True) == {"FINISHED"}
+assert bpy.ops.gbfr.clp_create_from_selection(
+    replace_existing=True,
+    preset_key="LONG_HAIR",
+    topology="CHAINS",
+    closed=False,
+) == {"FINISHED"}
 group = state.clp_groups[state.active_clp_index]
 assert len(group.nodes) == 8
 by_bone = {node.bone: node for node in group.nodes}
