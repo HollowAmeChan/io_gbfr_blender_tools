@@ -356,13 +356,39 @@ def _refresh_collision_references(layer, armature) -> None:
 _EXPORTED_BONE_RE = re.compile(r"^_([0-9a-fA-F]{3})$")
 
 
-def _export_bone_ids(armature, state) -> dict[str, int]:
+def _cloth_reserved_bone_names(clp_groups, clh_layers) -> set[str]:
+    bone_ids: set[int] = set()
+    for group in clp_groups:
+        for node in group.nodes:
+            for field in ("bone", "up", "down", "side", "poly", "fix"):
+                value = int(getattr(node, field))
+                if 0 <= value < MISSING_BONE:
+                    bone_ids.add(value)
+    for layer in clh_layers:
+        for collision in layer.collisions:
+            for field in ("p1", "p2"):
+                value = int(getattr(collision, field))
+                if 0 <= value < MISSING_BONE:
+                    bone_ids.add(value)
+    return {f"_{value:03x}" for value in bone_ids}
+
+
+def _export_bone_ids(armature, state, reserved_names=None, persist_appended=False) -> dict[str, int]:
     targets = resolve_model_export_targets(state.workspace_path, state.model_id)
     if targets.reference_skeleton is None:
         raise RuntimeError("CLP 创建需要工作区 source skeleton")
     reference = ModelSkeleton.GetRootAs(bytearray(targets.reference_skeleton.read_bytes()), 0)
     mesh_objects = [value for value in armature.children_recursive if value.type == "MESH"]
-    appended = appended_bone_export_name_map(armature, mesh_objects, reference)
+    if reserved_names is None:
+        reserved_names = _cloth_reserved_bone_names(state.clp_groups, state.clh_layers)
+    appended = appended_bone_export_name_map(
+        armature, mesh_objects, reference, reserved_names=reserved_names,
+    )
+    if persist_appended:
+        for bone_name, final_name in appended.items():
+            bone = armature.data.bones.get(bone_name)
+            if bone is not None:
+                bone["gbfr_bone_id"] = int(final_name[1:], 16)
     result: dict[str, int] = {}
     used: dict[int, str] = {}
     for bone in armature.data.bones:
@@ -379,8 +405,12 @@ def _export_bone_ids(armature, state) -> dict[str, int]:
     return result
 
 
-def _export_bone_mapping(armature, state) -> tuple[dict[str, int], dict[int, str]]:
-    by_name = _export_bone_ids(armature, state)
+def _export_bone_mapping(armature, state, reserved_names=None, persist_appended=False) -> tuple[dict[str, int], dict[int, str]]:
+    by_name = _export_bone_ids(
+        armature, state,
+        reserved_names=reserved_names,
+        persist_appended=persist_appended,
+    )
     return by_name, {bone_id: name for name, bone_id in by_name.items()}
 
 
@@ -441,13 +471,24 @@ def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> Non
     if addon is not None:
         preference_path = str(getattr(addon.preferences, "gbfr_data_tools_path", "") or "")
     state.data_tools_path = preference_path if Path(preference_path).is_file() else str(bundle.data_tools or "")
+    loaded = [
+        (record, load_clp(record.xml) if record.category == "clp" else load_clh(record.xml))
+        for record in bundle.cloth_files
+    ]
+    reserved_names = _cloth_reserved_bone_names(
+        [document for record, document in loaded if record.category == "clp"],
+        [document for record, document in loaded if record.category == "clh"],
+    )
     try:
-        _by_name, bone_mapping = _export_bone_mapping(armature, state)
+        _by_name, bone_mapping = _export_bone_mapping(
+            armature, state,
+            reserved_names=reserved_names,
+            persist_appended=True,
+        )
     except Exception:
         bone_mapping = _bone_map(armature)
-    for record in bundle.cloth_files:
+    for record, document in loaded:
         if record.category == "clp":
-            document = load_clp(record.xml)
             group = state.clp_groups.add()
             group.name = record.xml.name.removesuffix(".bxm.xml")
             group.xml_path = str(record.xml)
@@ -459,7 +500,6 @@ def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> Non
             for value in document.nodes:
                 _copy_node(group.nodes.add(), value, bone_mapping)
         elif record.category == "clh":
-            document = load_clh(record.xml)
             layer = state.clh_layers.add()
             layer.name = record.xml.name.removesuffix(".bxm.xml")
             layer.xml_path = str(record.xml)
@@ -645,7 +685,9 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             return {"CANCELLED"}
         group = state.clp_groups[state.active_clp_index]
         try:
-            by_name, bone_mapping = _export_bone_mapping(armature, state)
+            by_name, bone_mapping = _export_bone_mapping(
+                armature, state, persist_appended=True,
+            )
             snapshot = json.loads(self.selected_bones_json) if self.selected_bones_json else None
             selected = _selected_bones(context, armature, by_name, selected_names=snapshot)
             generated, selected_preset, chains = generate_nodes(
@@ -674,7 +716,7 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             generated_ids = {value.bone for value in generated}
             cleared_activated = 0
             for value in current:
-                for field in ("up", "down", "side", "poly"):
+                for field in ("up", "down", "side", "poly", "fix"):
                     if getattr(value, field) in generated_ids:
                         setattr(value, field, MISSING_BONE)
                         cleared_activated += 1

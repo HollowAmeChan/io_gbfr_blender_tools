@@ -149,8 +149,20 @@ def _skeleton_bone_names(reference_skeleton):
 	}
 
 
+def _encoded_bone_id(name):
+	if not isinstance(name, str) or len(name) != 4 or not name.startswith('_'):
+		return None
+	try:
+		value = int(name[1:], 16)
+	except ValueError:
+		return None
+	return value if 0 <= value < 0xFFF else None
+
+
 def _allocate_appended_bone_names(reference_names, occupied_names, count):
 	"""Allocate names from the experimentally approved GBFR namespaces."""
+	if count == 0:
+		return []
 	# `_xxx` is deliberately numeric-only here (for example `_016`); the
 	# letter-prefixed namespaces have their own priority and must not overlap.
 	candidates = [
@@ -172,26 +184,53 @@ def _allocate_appended_bone_names(reference_names, occupied_names, count):
 	)
 
 
-def appended_bone_export_name_map(armature_obj, mesh_objects, reference_skeleton):
+def appended_bone_export_name_map(armature_obj, mesh_objects, reference_skeleton, reserved_names=()):
 	"""Return the exact temporary export names assigned to appended bones."""
 	if reference_skeleton is None:
 		raise RuntimeError("实验性新增骨骼改名需要 reference skeleton。")
 	reference_names = _skeleton_bone_names(reference_skeleton)
 	native_bones = list(armature_obj.data.bones)
+	export_owners = {}
+	for bone in native_bones:
+		export_name = export_bone_name(bone)
+		if _encoded_bone_id(export_name) is None:
+			continue
+		previous = export_owners.get(export_name)
+		if previous is not None and previous != bone.name:
+			raise RuntimeError(f"骨骼固定骨号重复: {previous} / {bone.name} -> {export_name}")
+		export_owners[export_name] = bone.name
 	extra_bones = [
 		bone for bone in native_bones
 		if export_bone_name(bone) not in reference_names
 	]
 	if not extra_bones:
 		return {}
-	reserved_names = {bone.name for bone in native_bones}
-	reserved_names.update(
+	occupied_names = set(reserved_names)
+	occupied_names.update(bone.name for bone in native_bones)
+	occupied_names.update(
 		group.name
 		for mesh_obj in mesh_objects
 		for group in mesh_obj.vertex_groups
 	)
-	new_names = _allocate_appended_bone_names(reference_names, reserved_names, len(extra_bones))
-	return {bone.name: new_name for bone, new_name in zip(extra_bones, new_names)}
+	fixed = {}
+	fixed_owners = {}
+	unassigned = []
+	for bone in extra_bones:
+		export_name = export_bone_name(bone)
+		bone_id = _encoded_bone_id(export_name)
+		if bone_id is None:
+			unassigned.append(bone)
+			continue
+		if export_name in reference_names:
+			raise RuntimeError(f"新增骨骼 {bone.name} 的固定骨号与 source skeleton 冲突: {export_name}")
+		previous = fixed_owners.get(export_name)
+		if previous is not None and previous != bone.name:
+			raise RuntimeError(f"新增骨骼固定骨号重复: {previous} / {bone.name} -> {export_name}")
+		fixed_owners[export_name] = bone.name
+		fixed[bone.name] = export_name
+		occupied_names.add(export_name)
+	new_names = _allocate_appended_bone_names(reference_names, occupied_names, len(unassigned))
+	return fixed | {bone.name: new_name for bone, new_name in zip(unassigned, new_names)}
 
 
 def rename_new_bones_for_experimental_export(armature_obj, mesh_objects, reference_skeleton):

@@ -79,20 +79,33 @@ bpy.ops.object.mode_set(mode="OBJECT")
 for bone in armature.data.bones:
     bone.select = bone.name in grid_names
 mesh_objects = [value for value in armature.children_recursive if value.type == "MESH"]
-expected_names = appended_bone_export_name_map(armature, mesh_objects, source_skeleton)
-export_ids = _export_bone_ids(armature, state)
 all_names = grid_names + fork_names
+unreserved_names = appended_bone_export_name_map(armature, mesh_objects, source_skeleton)
+reserved_name = unreserved_names[grid_names[0]]
+reserved_id = int(reserved_name[1:], 16)
+other_group = next(group for group in state.clp_groups if group.group_id != 2 and group.nodes)
+other_node = other_group.nodes[0]
+other_node.fix = reserved_id
+other_layer = next(layer for layer in state.clh_layers if layer.collisions)
+other_collision = other_layer.collisions[0]
+other_collision.p1 = reserved_id
+export_ids = _export_bone_ids(armature, state, persist_appended=True)
+assert reserved_id not in export_ids.values()
+expected_names = appended_bone_export_name_map(armature, mesh_objects, source_skeleton)
 assert set(all_names) <= set(expected_names)
 for name in all_names:
     assert export_ids[name] == int(expected_names[name][1:], 16)
+    assert int(armature.data.bones[name]["gbfr_bone_id"]) == export_ids[name]
 
 state.active_clp_index = next(index for index, group in enumerate(state.clp_groups) if group.group_id == 2)
 group = state.clp_groups[state.active_clp_index]
 new_ids = {export_ids[name] for name in grid_names}
 activated_source_id = group.nodes[0].bone
 group.nodes[0].side = min(new_ids)
+group.nodes[0].fix = min(new_ids)
 node_fields = tuple(ClpNode.__dataclass_fields__)
 side_index = node_fields.index("side")
+fix_index = node_fields.index("fix")
 
 
 def node_snapshot(node):
@@ -117,9 +130,15 @@ for bone_id, before in original_nodes.items():
     after = node_snapshot(after_add[bone_id])
     if bone_id == activated_source_id:
         assert after[side_index] == MISSING_BONE
-        assert after[:side_index] + after[side_index + 1:] == before[:side_index] + before[side_index + 1:]
+        assert after[fix_index] == MISSING_BONE
+        ignored = {side_index, fix_index}
+        assert tuple(value for index, value in enumerate(after) if index not in ignored) == tuple(
+            value for index, value in enumerate(before) if index not in ignored
+        )
     else:
         assert after == before
+assert other_node.fix == reserved_id
+assert other_collision.p1 == reserved_id
 for bone_id in new_ids:
     node = after_add[bone_id]
     for field in ("up", "down", "side", "poly", "fix"):
