@@ -100,9 +100,12 @@ for name in all_names:
 state.active_clp_index = next(index for index, group in enumerate(state.clp_groups) if group.group_id == 2)
 group = state.clp_groups[state.active_clp_index]
 new_ids = {export_ids[name] for name in grid_names}
+first_chain_names = grid_names[:2]
+remaining_chain_names = grid_names[2:]
+first_chain_ids = {export_ids[name] for name in first_chain_names}
 activated_source_id = group.nodes[0].bone
-group.nodes[0].side = min(new_ids)
-group.nodes[0].fix = min(new_ids)
+group.nodes[0].side = min(first_chain_ids)
+group.nodes[0].fix = min(first_chain_ids)
 node_fields = tuple(ClpNode.__dataclass_fields__)
 side_index = node_fields.index("side")
 fix_index = node_fields.index("fix")
@@ -117,6 +120,24 @@ def node_snapshot(node):
 
 
 original_nodes = {node.bone: node_snapshot(node) for node in group.nodes}
+for bone in armature.data.bones:
+    bone.select = bone.name in first_chain_names
+assert bpy.ops.gbfr.clp_create_from_selection(
+    replace_existing=False,
+    preset_key="SHORT_HAIR",
+    topology="CHAINS",
+    closed=False,
+    apply_header=False,
+) == {"FINISHED"}
+assert len(group.nodes) == len(original_nodes) + len(first_chain_names)
+after_first_add = {node.bone: node_snapshot(node) for node in group.nodes}
+for name in first_chain_names:
+    bone = armature.data.bones[name]
+    bone["gbfr_bone_id"] = -1
+    bone["gbfr_original_name"] = bone.name
+    bone["original_name"] = bone.name
+for bone in armature.data.bones:
+    bone.select = bone.name in remaining_chain_names
 assert bpy.ops.gbfr.clp_create_from_selection(
     replace_existing=False,
     preset_key="SHORT_HAIR",
@@ -137,6 +158,11 @@ for bone_id, before in original_nodes.items():
         )
     else:
         assert after == before
+for bone_id in first_chain_ids:
+    assert node_snapshot(after_add[bone_id]) == after_first_add[bone_id]
+for name in first_chain_names:
+    assert int(armature.data.bones[name]["gbfr_bone_id"]) == export_ids[name]
+assert "迁移" in state.last_status
 assert other_node.fix == reserved_id
 assert other_collision.p1 == reserved_id
 for bone_id in new_ids:
@@ -145,6 +171,8 @@ for bone_id in new_ids:
         target = getattr(node, field)
         assert target == MISSING_BONE or target in new_ids, (bone_id, field, target)
 
+for bone in armature.data.bones:
+    bone.select = bone.name in grid_names
 assert bpy.ops.gbfr.clp_create_from_selection(
     replace_existing=True,
     preset_key="SKIRT",

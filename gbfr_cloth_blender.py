@@ -373,6 +373,54 @@ def _cloth_reserved_bone_names(clp_groups, clh_layers) -> set[str]:
     return {f"_{value:03x}" for value in bone_ids}
 
 
+def _pin_existing_clp_bone_ids(armature, state) -> int:
+    desired_by_name: dict[str, int] = {}
+    owners: dict[int, str] = {}
+    for group in state.clp_groups:
+        for node in group.nodes:
+            bone = armature.data.bones.get(node.bone_ref)
+            if bone is None or bone.get("gbfr_original_index") is not None:
+                continue
+            bone_id = int(node.bone)
+            if not 0 <= bone_id < MISSING_BONE:
+                continue
+            previous_id = desired_by_name.get(bone.name)
+            if previous_id is not None and previous_id != bone_id:
+                raise RuntimeError(f"旧 CLP 节点给骨骼 {bone.name} 记录了多个骨号")
+            previous_owner = owners.get(bone_id)
+            if previous_owner is not None and previous_owner != bone.name:
+                raise RuntimeError(f"旧 CLP 骨号冲突: {previous_owner} / {bone.name} -> _{bone_id:03x}")
+            desired_by_name[bone.name] = bone_id
+            owners[bone_id] = bone.name
+
+    changed = 0
+    for bone in armature.data.bones:
+        if bone.name in desired_by_name or bone.get("gbfr_original_index") is not None:
+            continue
+        try:
+            current_id = int(bone.get("gbfr_bone_id", -1))
+        except (TypeError, ValueError):
+            current_id = -1
+        if current_id in owners:
+            bone["gbfr_bone_id"] = -1
+            bone["gbfr_original_name"] = bone.name
+            bone["original_name"] = bone.name
+            changed += 1
+
+    for bone_name, bone_id in desired_by_name.items():
+        bone = armature.data.bones[bone_name]
+        try:
+            current_id = int(bone.get("gbfr_bone_id", -1))
+        except (TypeError, ValueError):
+            current_id = -1
+        if current_id != bone_id or export_bone_name(bone) != f"_{bone_id:03x}":
+            bone["gbfr_bone_id"] = bone_id
+            bone["gbfr_original_name"] = bone.name
+            bone["original_name"] = bone.name
+            changed += 1
+    return changed
+
+
 def _export_bone_ids(armature, state, reserved_names=None, persist_appended=False) -> dict[str, int]:
     targets = resolve_model_export_targets(state.workspace_path, state.model_id)
     if targets.reference_skeleton is None:
@@ -685,6 +733,7 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             return {"CANCELLED"}
         group = state.clp_groups[state.active_clp_index]
         try:
+            migrated_bone_ids = _pin_existing_clp_bone_ids(armature, state)
             by_name, bone_mapping = _export_bone_mapping(
                 armature, state, persist_appended=True,
             )
@@ -726,7 +775,8 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             group.active_node_index = len(current)
             action = "替换" if self.replace_existing else "添加"
             detail = f"，清除 {cleared_activated} 个被新骨号激活的旧悬空引用" if cleared_activated else ""
-            state.last_status = f"已{action} {len(generated)} 个节点 / {len(chains)} 串{detail}，尚未写入 XML"
+            migration = f"，迁移 {migrated_bone_ids} 个旧骨号" if migrated_bone_ids else ""
+            state.last_status = f"已{action} {len(generated)} 个节点 / {len(chains)} 串{migration}{detail}，尚未写入 XML"
             self.report({"INFO"}, state.last_status)
             _tag_redraw()
             return {"FINISHED"}
