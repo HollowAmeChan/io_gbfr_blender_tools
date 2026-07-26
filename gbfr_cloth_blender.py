@@ -671,12 +671,20 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             if duplicates:
                 names = ", ".join(bone_mapping.get(value, f"_{value:03x}") for value in duplicates[:8])
                 raise ValueError(f"当前 CLP 已包含所选节点: {names}")
+            generated_ids = {value.bone for value in generated}
+            cleared_activated = 0
+            for value in current:
+                for field in ("up", "down", "side", "poly"):
+                    if getattr(value, field) in generated_ids:
+                        setattr(value, field, MISSING_BONE)
+                        cleared_activated += 1
             _replace_group_nodes(group, current + generated, bone_mapping)
             if self.apply_header:
                 _apply_preset_header(group, selected_preset)
             group.active_node_index = len(current)
             action = "替换" if self.replace_existing else "添加"
-            state.last_status = f"已{action} {len(generated)} 个节点 / {len(chains)} 串，尚未写入 XML"
+            detail = f"，清除 {cleared_activated} 个被新骨号激活的旧悬空引用" if cleared_activated else ""
+            state.last_status = f"已{action} {len(generated)} 个节点 / {len(chains)} 串{detail}，尚未写入 XML"
             self.report({"INFO"}, state.last_status)
             _tag_redraw()
             return {"FINISHED"}

@@ -88,11 +88,16 @@ for name in all_names:
 
 state.active_clp_index = next(index for index, group in enumerate(state.clp_groups) if group.group_id == 2)
 group = state.clp_groups[state.active_clp_index]
+new_ids = {export_ids[name] for name in grid_names}
+activated_source_id = group.nodes[0].bone
+group.nodes[0].side = min(new_ids)
+node_fields = tuple(ClpNode.__dataclass_fields__)
+side_index = node_fields.index("side")
 
 
 def node_snapshot(node):
     values = []
-    for field in ClpNode.__dataclass_fields__:
+    for field in node_fields:
         value = getattr(node, field)
         values.append(tuple(value) if field == "offset" else value)
     return tuple(values)
@@ -108,8 +113,13 @@ assert bpy.ops.gbfr.clp_create_from_selection(
 ) == {"FINISHED"}
 assert len(group.nodes) == len(original_nodes) + len(grid_names)
 after_add = {node.bone: node for node in group.nodes}
-assert all(node_snapshot(after_add[bone_id]) == values for bone_id, values in original_nodes.items())
-new_ids = {export_ids[name] for name in grid_names}
+for bone_id, before in original_nodes.items():
+    after = node_snapshot(after_add[bone_id])
+    if bone_id == activated_source_id:
+        assert after[side_index] == MISSING_BONE
+        assert after[:side_index] + after[side_index + 1:] == before[:side_index] + before[side_index + 1:]
+    else:
+        assert after == before
 for bone_id in new_ids:
     node = after_add[bone_id]
     for field in ("up", "down", "side", "poly", "fix"):
