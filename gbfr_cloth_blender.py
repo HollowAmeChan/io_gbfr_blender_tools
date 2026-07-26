@@ -295,7 +295,7 @@ class GBFRClothStateProperties(PropertyGroup):
         ),
     )
     clp_tool_closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
-    clp_tool_apply_header: BoolProperty(name="套用组参数", default=True, description="同时把预设的 Header 参数写入当前 CLP 组")
+    clp_tool_apply_header: BoolProperty(name="套用组参数", default=False, description="同时把预设的 Header 参数写入当前 CLP 组")
     last_status: StringProperty(name="状态")
 
 
