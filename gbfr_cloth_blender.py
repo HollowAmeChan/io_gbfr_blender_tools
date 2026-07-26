@@ -482,11 +482,16 @@ def _armature(context) -> bpy.types.Object | None:
 
 
 def _node_value(source) -> ClpNode:
-    return ClpNode(**{name: getattr(source, name) for name in ClpNode.__dataclass_fields__})
+    values = {name: getattr(source, name) for name in ClpNode.__dataclass_fields__}
+    values["offset"] = tuple(values["offset"])
+    return ClpNode(**values)
 
 
 def _collision_value(source) -> ClhCollision:
-    return ClhCollision(**{name: getattr(source, name) for name in ClhCollision.__dataclass_fields__})
+    values = {name: getattr(source, name) for name in ClhCollision.__dataclass_fields__}
+    values["offset1"] = tuple(values["offset1"])
+    values["offset2"] = tuple(values["offset2"])
+    return ClhCollision(**values)
 
 
 def _encode_bxm(xml_path: Path, output_path: Path, tool_path: str) -> None:

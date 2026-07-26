@@ -18,6 +18,7 @@ assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINI
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
 from io_gbfr_blender_tools.gbfr_bone_selection import selected_bone_names
 from io_gbfr_blender_tools.gbfr_cloth_blender import _export_bone_ids
+from io_gbfr_blender_tools.gbfr_cloth_format import ClpNode, MISSING_BONE
 from io_gbfr_blender_tools.gbfr_model_export_v2 import (
     appended_bone_export_name_map,
     rename_new_bones_for_experimental_export,
@@ -86,6 +87,35 @@ for name in all_names:
     assert export_ids[name] == int(expected_names[name][1:], 16)
 
 state.active_clp_index = next(index for index, group in enumerate(state.clp_groups) if group.group_id == 2)
+group = state.clp_groups[state.active_clp_index]
+
+
+def node_snapshot(node):
+    values = []
+    for field in ClpNode.__dataclass_fields__:
+        value = getattr(node, field)
+        values.append(tuple(value) if field == "offset" else value)
+    return tuple(values)
+
+
+original_nodes = {node.bone: node_snapshot(node) for node in group.nodes}
+assert bpy.ops.gbfr.clp_create_from_selection(
+    replace_existing=False,
+    preset_key="SHORT_HAIR",
+    topology="CHAINS",
+    closed=False,
+    apply_header=False,
+) == {"FINISHED"}
+assert len(group.nodes) == len(original_nodes) + len(grid_names)
+after_add = {node.bone: node for node in group.nodes}
+assert all(node_snapshot(after_add[bone_id]) == values for bone_id, values in original_nodes.items())
+new_ids = {export_ids[name] for name in grid_names}
+for bone_id in new_ids:
+    node = after_add[bone_id]
+    for field in ("up", "down", "side", "poly", "fix"):
+        target = getattr(node, field)
+        assert target == MISSING_BONE or target in new_ids, (bone_id, field, target)
+
 assert bpy.ops.gbfr.clp_create_from_selection(
     replace_existing=True,
     preset_key="SKIRT",

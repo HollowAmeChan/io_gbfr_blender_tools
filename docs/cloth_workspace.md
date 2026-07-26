@@ -31,6 +31,8 @@ CLP 列表会直接显示组 ID、节点数和引用的 CLH 层。选择组后�
 
 这些操作只修改 Blender 内存中的当前 CLP，支持 Undo。确认连接和参数后再用原有“写入当前”生成 XML/BXM；不满意时也可以重新载入 `unpack`，或在 GBFR Modtools 中从 source 恢复单个 CLP。
 
+实现注意：复制现有 `CLOTH_WK` 或 CLH 碰撞记录时，必须先把 Blender RNA 的向量属性转换为普通 tuple，再清空并重建 `CollectionProperty`。RNA 数组是对原集合存储的动态引用；直接保存在临时数据类中会在 `clear()` 后失效，导致追加新链时改坏其他节点的 `offset`。真实 `pl1400` 烟测会在独立链追加前后逐字段比较全部旧节点，并检查新引用不越过本次选择。
+
 纯 Python 测试：
 
 ```powershell
