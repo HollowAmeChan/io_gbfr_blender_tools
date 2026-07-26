@@ -17,7 +17,9 @@ assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINI
 
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
 from io_gbfr_blender_tools.gbfr_bone_selection import selected_bone_names
-from io_gbfr_blender_tools.gbfr_cloth_blender import _export_bone_ids
+from io_gbfr_blender_tools.gbfr_cloth_blender import (
+    _canonicalize_cloth_bone_ids, _export_bone_ids,
+)
 from io_gbfr_blender_tools.gbfr_cloth_format import ClpNode, MISSING_BONE
 from io_gbfr_blender_tools.gbfr_model_export_v2 import (
     appended_bone_export_name_map,
@@ -41,6 +43,7 @@ armature.select_set(True)
 bpy.ops.object.mode_set(mode="EDIT")
 parent = armature.data.edit_bones[6]
 grid_names = []
+terminal_names = []
 for chain_name, x in (("CLP_TEST_A", -0.02), ("CLP_TEST_B", 0.0), ("CLP_TEST_C", 0.02)):
     previous = parent
     for depth in range(1, 3):
@@ -50,6 +53,11 @@ for chain_name, x in (("CLP_TEST_A", -0.02), ("CLP_TEST_B", 0.0), ("CLP_TEST_C",
         bone.parent = previous
         previous = bone
         grid_names.append(bone.name)
+    terminal = armature.data.edit_bones.new(f"{chain_name}_TIP")
+    terminal.head = previous.tail
+    terminal.tail = (x, previous.tail.y + 0.01, 0.0)
+    terminal.parent = previous
+    terminal_names.append(terminal.name)
 
 fork_names = []
 
@@ -79,16 +87,18 @@ bpy.ops.object.mode_set(mode="OBJECT")
 for bone in armature.data.bones:
     bone.select = bone.name in grid_names
 mesh_objects = [value for value in armature.children_recursive if value.type == "MESH"]
-all_names = grid_names + fork_names
+all_names = grid_names + terminal_names + fork_names
 unreserved_names = appended_bone_export_name_map(armature, mesh_objects, source_skeleton)
 reserved_name = unreserved_names[grid_names[0]]
 reserved_id = int(reserved_name[1:], 16)
 other_group = next(group for group in state.clp_groups if group.group_id != 2 and group.nodes)
 other_node = other_group.nodes[0]
 other_node.fix = reserved_id
+other_node.fix_ref = grid_names[0]
 other_layer = next(layer for layer in state.clh_layers if layer.collisions)
 other_collision = other_layer.collisions[0]
 other_collision.p1 = reserved_id
+other_collision.p1_ref = grid_names[0]
 export_ids = _export_bone_ids(armature, state, persist_appended=True)
 assert reserved_id not in export_ids.values()
 expected_names = appended_bone_export_name_map(armature, mesh_objects, source_skeleton)
@@ -162,9 +172,15 @@ for bone_id in first_chain_ids:
     assert node_snapshot(after_add[bone_id]) == after_first_add[bone_id]
 for name in first_chain_names:
     assert int(armature.data.bones[name]["gbfr_bone_id"]) == export_ids[name]
-assert "迁移" in state.last_status
-assert other_node.fix == reserved_id
-assert other_collision.p1 == reserved_id
+assert "导出前修复" in state.last_status
+repaired_other_node = next(
+    node for node in other_group.nodes if node.fix_ref == grid_names[0]
+)
+repaired_other_collision = next(
+    collision for collision in other_layer.collisions if collision.p1_ref == grid_names[0]
+)
+assert repaired_other_node.fix == export_ids[grid_names[0]]
+assert repaired_other_collision.p1 == export_ids[grid_names[0]]
 for bone_id in new_ids:
     node = after_add[bone_id]
     for field in ("up", "down", "side", "poly", "fix"):
@@ -194,6 +210,35 @@ assert state.clp_tool_topology == "GRID" and state.clp_tool_closed is True
 by_bone = {node.bone: node for node in group.nodes}
 assert by_bone[a1].side == c1 and by_bone[a2].side == c2
 
+terminal_id = export_ids[terminal_names[0]]
+used_ids = {
+    int(node.bone)
+    for value_group in state.clp_groups
+    for node in value_group.nodes
+}
+used_ids.update(
+    int(bone.get("gbfr_bone_id", -1))
+    for bone in armature.data.bones
+)
+legacy_terminal_id = next(
+    value for value in range(MISSING_BONE - 1, 0, -1)
+    if value not in used_ids
+)
+for bone_id in (terminal_id, legacy_terminal_id):
+    terminal_node = group.nodes.add()
+    terminal_node.bone = bone_id
+    terminal_node.bone_ref = terminal_names[0]
+    terminal_node.up = a2
+    terminal_node.up_ref = grid_names[1]
+by_bone[a2].down = terminal_id
+by_bone[a2].down_ref = terminal_names[0]
+_by_name, _mapping, _pinned, migrated, deduplicated = _canonicalize_cloth_bone_ids(
+    armature, state,
+)
+assert migrated >= 1 and deduplicated == 1
+by_bone = {node.bone: node for node in group.nodes}
+assert terminal_id in by_bone and legacy_terminal_id not in by_bone
+
 # Simulate a node created by an older plug-in version: its raw ID still drives
 # the preview, but it has no saved Blender bone reference.
 by_bone[a2].suspend_reference_updates = True
@@ -204,6 +249,8 @@ for bone in armature.data.bones:
 assert bpy.ops.gbfr.clp_delete_selection() == {"FINISHED"}
 by_bone = {node.bone: node for node in group.nodes}
 assert a2 not in by_bone
+assert terminal_id not in by_bone
+assert "拓扑尾端" in state.last_status
 assert by_bone[a1].down == 4095
 assert by_bone[b2].side == 4095 and by_bone[b2].poly == 4095
 

@@ -24,6 +24,7 @@ from io_gbfr_blender_tools.Entities.MInfo_ModelInfo.VertexBufferType import Vert
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
 from io_gbfr_blender_tools.gbfr_cloth_format import load_clp
 from io_gbfr_blender_tools.gbfr_model_export_v2 import (
+    export_bone_name,
     _allocate_appended_bone_names,
     quantize_vertex_weights,
 )
@@ -134,8 +135,26 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
 
     cloth_state = session_root.gbfr_cloth
     test_group = next(group for group in cloth_state.clp_groups if group.nodes)
-    test_group.nodes[0].friction += 0.123456
-    expected_friction = test_group.nodes[0].friction
+    test_node = next(node for node in test_group.nodes if node.bone_ref)
+    opaque_group = next(
+        group for group in cloth_state.clp_groups
+        if any(not node.bone_ref for node in group.nodes)
+    )
+    opaque_node = next(node for node in opaque_group.nodes if not node.bone_ref)
+    opaque_signature = (
+        int(opaque_node.bone), int(opaque_node.up), int(opaque_node.down),
+        int(opaque_node.side), int(opaque_node.poly), int(opaque_node.fix),
+    )
+    test_node.friction += 0.123456
+    expected_friction = test_node.friction
+    expected_export_name = export_bone_name(session_root.data.bones[test_node.bone_ref])
+    expected_bone_id = int(expected_export_name[1:], 16)
+    stale_id = next(
+        value for value in range(4094, 0, -1)
+        if value != expected_bone_id
+        and all(value != node.bone for group in cloth_state.clp_groups for node in group.nodes)
+    )
+    test_node.bone = stale_id
 
     workspace_path = root / "workspace.json"
     workspace_path.write_text(json.dumps({
@@ -159,7 +178,21 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
         if record["Category"] == "clp" and record["GroupId"] == test_group.group_id
     )
     exported_clp = load_clp(root / target_clp_record["Xml"])
-    assert abs(exported_clp.nodes[0].friction - expected_friction) < 1e-6
+    exported_test_node = next(node for node in exported_clp.nodes if node.bone == expected_bone_id)
+    assert abs(exported_test_node.friction - expected_friction) < 1e-6
+    assert any(
+        node.bone == expected_bone_id and node.bone_ref
+        for node in test_group.nodes
+    )
+    opaque_clp_record = next(
+        record for record in cloth_records
+        if record["Category"] == "clp" and record["GroupId"] == opaque_group.group_id
+    )
+    exported_opaque_clp = load_clp(root / opaque_clp_record["Xml"])
+    assert any(
+        (node.bone, node.up, node.down, node.side, node.poly, node.fix) == opaque_signature
+        for node in exported_opaque_clp.nodes
+    )
     assert not (root / target_clp_record["Output"]).exists()
     assert f"{len(cloth_records)} 个 Cloth XML" in session.gbfr_session.last_status
 

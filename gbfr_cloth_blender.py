@@ -402,6 +402,40 @@ def _selected_clp_node_indices(
     return indices
 
 
+def _terminal_child_node_indices(
+    group, armature, selected_names, exported_by_name=None,
+) -> list[int]:
+    selected_indices = _selected_clp_node_indices(
+        group, armature, selected_names, exported_by_name,
+    )
+    selected_ids = {int(group.nodes[index].bone) for index in selected_indices}
+    terminal_names = set()
+    for selected_name in selected_names:
+        bone = armature.data.bones.get(selected_name)
+        if bone is None:
+            continue
+        for child in bone.children:
+            if child.children:
+                continue
+            child_indices = _selected_clp_node_indices(
+                group, armature, {child.name}, exported_by_name,
+            )
+            for index in child_indices:
+                node = group.nodes[index]
+                if int(node.down) != MISSING_BONE:
+                    continue
+                if (
+                    node.up_ref in selected_names
+                    or int(node.up) in selected_ids
+                    or int(node.up) == MISSING_BONE
+                ):
+                    terminal_names.add(child.name)
+                    break
+    return _selected_clp_node_indices(
+        group, armature, terminal_names, exported_by_name,
+    )
+
+
 def _cloth_reserved_bone_names(clp_groups, clh_layers) -> set[str]:
     bone_ids: set[int] = set()
     for group in clp_groups:
@@ -420,7 +454,7 @@ def _cloth_reserved_bone_names(clp_groups, clh_layers) -> set[str]:
 
 
 def _pin_existing_clp_bone_ids(armature, state) -> int:
-    desired_by_name: dict[str, int] = {}
+    candidates_by_name: dict[str, dict[int, int]] = {}
     owners: dict[int, str] = {}
     for group in state.clp_groups:
         for node in group.nodes:
@@ -430,14 +464,23 @@ def _pin_existing_clp_bone_ids(armature, state) -> int:
             bone_id = int(node.bone)
             if not 0 <= bone_id < MISSING_BONE:
                 continue
-            previous_id = desired_by_name.get(bone.name)
-            if previous_id is not None and previous_id != bone_id:
-                raise RuntimeError(f"旧 CLP 节点给骨骼 {bone.name} 记录了多个骨号")
             previous_owner = owners.get(bone_id)
             if previous_owner is not None and previous_owner != bone.name:
                 raise RuntimeError(f"旧 CLP 骨号冲突: {previous_owner} / {bone.name} -> _{bone_id:03x}")
-            desired_by_name[bone.name] = bone_id
             owners[bone_id] = bone.name
+            candidates = candidates_by_name.setdefault(bone.name, {})
+            candidates[bone_id] = candidates.get(bone_id, 0) + 1
+
+    desired_by_name: dict[str, int] = {}
+    for bone_name, candidates in candidates_by_name.items():
+        bone = armature.data.bones[bone_name]
+        current_id = _bone_id(bone)
+        if current_id in candidates:
+            desired_by_name[bone_name] = current_id
+        else:
+            desired_by_name[bone_name] = min(
+                candidates, key=lambda value: (-candidates[value], value),
+            )
 
     changed = 0
     for bone in armature.data.bones:
@@ -623,6 +666,153 @@ def _collision_value(source) -> ClhCollision:
     return ClhCollision(**values)
 
 
+def _canonicalize_cloth_bone_ids(armature, state, exported_bone_names=None):
+    if exported_bone_names is None:
+        pinned_count = _pin_existing_clp_bone_ids(armature, state)
+        by_name, bone_mapping = _export_bone_mapping(
+            armature, state, persist_appended=True,
+        )
+    else:
+        pinned_count = 0
+        by_name = {}
+        bone_mapping = {}
+        for bone_name, export_name in exported_bone_names.items():
+            match = _EXPORTED_BONE_RE.fullmatch(export_name)
+            if match is None or armature.data.bones.get(bone_name) is None:
+                continue
+            bone_id = int(match.group(1), 16)
+            previous = bone_mapping.get(bone_id)
+            if previous is not None and previous != bone_name:
+                raise RuntimeError(
+                    f"模型实际导出骨号重复: {previous} / {bone_name} -> {export_name}",
+                )
+            by_name[bone_name] = bone_id
+            bone_mapping[bone_id] = bone_name
+            bone = armature.data.bones[bone_name]
+            if bone.get("gbfr_original_index") is None and _bone_id(bone) != bone_id:
+                bone["gbfr_bone_id"] = bone_id
+                bone["gbfr_original_name"] = bone.name
+                bone["original_name"] = bone.name
+                pinned_count += 1
+    strict_final_ids = exported_bone_names is not None
+    final_ids = set(by_name.values())
+    by_alias: dict[str, int] = {}
+    for bone in armature.data.bones:
+        bone_id = by_name.get(bone.name)
+        if bone_id is None:
+            continue
+        for alias in _bone_identity_aliases(bone):
+            by_alias[alias] = bone_id
+
+    legacy_mapping = _bone_map(armature)
+    raw_to_canonical: dict[int, int] = {}
+    for group in state.clp_groups:
+        for node in group.nodes:
+            raw_id = int(node.bone)
+            reference = node.bone_ref or legacy_mapping.get(raw_id, "")
+            canonical_id = by_alias.get(reference)
+            if canonical_id is None:
+                continue
+            previous = raw_to_canonical.get(raw_id)
+            if previous is not None and previous != canonical_id:
+                raise RuntimeError(
+                    f"CLP 原始骨号 _{raw_id:03x} 同时指向多个骨骼",
+                )
+            raw_to_canonical[raw_id] = canonical_id
+
+    migrated_count = 0
+    deduplicated_count = 0
+    for group in state.clp_groups:
+        candidates = []
+        for index, source in enumerate(group.nodes):
+            value = _node_value(source)
+            original_bone = int(value.bone)
+            reference = source.bone_ref or legacy_mapping.get(original_bone, "")
+            value.bone = by_alias.get(
+                reference, raw_to_canonical.get(original_bone, original_bone),
+            )
+            if value.bone != original_bone:
+                migrated_count += 1
+            for field in ("up", "down", "side", "poly", "fix"):
+                original_id = int(getattr(value, field))
+                if original_id == MISSING_BONE:
+                    continue
+                field_ref = getattr(source, field + "_ref", "")
+                canonical_id = by_alias.get(
+                    field_ref, raw_to_canonical.get(original_id, original_id),
+                )
+                if canonical_id != original_id:
+                    setattr(value, field, canonical_id)
+                    migrated_count += 1
+            if strict_final_ids:
+                for field in ("bone", "up", "down", "side", "poly", "fix"):
+                    field_id = int(getattr(value, field))
+                    if field != "bone" and field_id == MISSING_BONE:
+                        continue
+                    original_id = int(getattr(source, field))
+                    reference = getattr(source, field + "_ref", "")
+                    if not reference:
+                        reference = legacy_mapping.get(original_id, "")
+                    if reference and field_id not in final_ids:
+                        identity = source.bone_ref or f"_{int(source.bone):03x}"
+                        raise ValueError(
+                            f"{group.name} 节点 {identity}.{field} 无法映射到本次导出骨架"
+                            + (f"（引用 {reference}）" if reference else ""),
+                        )
+            rank = (original_bone != value.bone, index)
+            candidates.append((index, rank, value))
+
+        winners = {}
+        for entry in candidates:
+            canonical_id = entry[2].bone
+            previous = winners.get(canonical_id)
+            if previous is None or entry[1] < previous[1]:
+                winners[canonical_id] = entry
+        deduplicated_count += len(candidates) - len(winners)
+        values = [entry[2] for entry in sorted(winners.values(), key=lambda item: item[0])]
+        _replace_group_nodes(group, values, bone_mapping)
+
+    for layer in state.clh_layers:
+        for collision in layer.collisions:
+            collision.suspend_reference_updates = True
+            try:
+                for field in ("p1", "p2"):
+                    original_id = int(getattr(collision, field))
+                    reference = getattr(collision, field + "_ref", "")
+                    canonical_id = by_alias.get(
+                        reference, raw_to_canonical.get(original_id, original_id),
+                    )
+                    if strict_final_ids and reference and canonical_id not in final_ids:
+                        raise ValueError(
+                            f"{layer.name} 碰撞 #{collision.collision_id}.{field} "
+                            f"无法映射到本次导出骨架"
+                            + (f"（引用 {reference}）" if reference else ""),
+                        )
+                    if canonical_id != original_id:
+                        setattr(collision, field, canonical_id)
+                        migrated_count += 1
+                    setattr(collision, field + "_ref", bone_mapping.get(canonical_id, reference))
+            finally:
+                collision.suspend_reference_updates = False
+        _refresh_collision_references(layer, armature)
+    return by_name, bone_mapping, pinned_count, migrated_count, deduplicated_count
+
+
+def prepare_cloth_for_model_export(
+    armature, minfo_path: str | Path, workspace_json: str | Path,
+) -> tuple[int, int, int]:
+    state = getattr(armature, "gbfr_cloth", None)
+    if state is None or not state.enabled:
+        return 0, 0, 0
+    bundle = resolve_model_bundle(minfo_path, workspace_json)
+    state.workspace_path = str(bundle.workspace_json)
+    state.minfo_path = str(bundle.minfo)
+    _by_name, _bone_mapping, pinned, migrated, deduplicated = (
+        _canonicalize_cloth_bone_ids(armature, state)
+    )
+    return pinned, migrated, deduplicated
+
+
 def _save_clp_xml(group, destination: Path) -> None:
     template = destination if destination.is_file() else Path(group.xml_path)
     document = load_clp(template)
@@ -645,11 +835,22 @@ def _save_clh_xml(layer, destination: Path) -> None:
     layer.xml_path = str(destination)
 
 
-def write_cloth_xml_to_workspace(armature, minfo_path: str | Path, workspace_json: str | Path) -> int:
+def write_cloth_xml_to_workspace(
+    armature, minfo_path: str | Path, workspace_json: str | Path,
+    exported_bone_names=None,
+) -> int:
     state = getattr(armature, "gbfr_cloth", None)
     if state is None or not state.enabled:
         return 0
     bundle = resolve_model_bundle(minfo_path, workspace_json)
+    if exported_bone_names is None:
+        prepare_cloth_for_model_export(armature, bundle.minfo, bundle.workspace_json)
+    else:
+        state.workspace_path = str(bundle.workspace_json)
+        state.minfo_path = str(bundle.minfo)
+        _canonicalize_cloth_bone_ids(
+            armature, state, exported_bone_names=exported_bone_names,
+        )
     clp_by_id = {group.group_id: group for group in state.clp_groups}
     clh_by_id = {layer.group_id: layer for layer in state.clh_layers}
     count = 0
@@ -755,9 +956,11 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             return {"CANCELLED"}
         group = state.clp_groups[state.active_clp_index]
         try:
-            migrated_bone_ids = _pin_existing_clp_bone_ids(armature, state)
-            by_name, bone_mapping = _export_bone_mapping(
-                armature, state, persist_appended=True,
+            (
+                by_name, bone_mapping, pinned_bone_ids,
+                migrated_references, deduplicated_nodes,
+            ) = _canonicalize_cloth_bone_ids(
+                armature, state,
             )
             snapshot = json.loads(self.selected_bones_json) if self.selected_bones_json else None
             selected = _selected_bones(context, armature, by_name, selected_names=snapshot)
@@ -797,8 +1000,15 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             group.active_node_index = len(current)
             action = "替换" if self.replace_existing else "添加"
             detail = f"，清除 {cleared_activated} 个被新骨号激活的旧悬空引用" if cleared_activated else ""
-            migration = f"，迁移 {migrated_bone_ids} 个旧骨号" if migrated_bone_ids else ""
-            state.last_status = f"已{action} {len(generated)} 个节点 / {len(chains)} 串{migration}{detail}，尚未写入 XML"
+            repairs = []
+            if pinned_bone_ids:
+                repairs.append(f"固定 {pinned_bone_ids} 个骨号")
+            if migrated_references:
+                repairs.append(f"迁移 {migrated_references} 个旧引用")
+            if deduplicated_nodes:
+                repairs.append(f"合并 {deduplicated_nodes} 个重复节点")
+            repair_detail = f"，导出前修复：{'、'.join(repairs)}" if repairs else ""
+            state.last_status = f"已{action} {len(generated)} 个节点 / {len(chains)} 串{repair_detail}{detail}，尚未写入 XML"
             self.report({"INFO"}, state.last_status)
             _tag_redraw()
             return {"FINISHED"}
@@ -811,7 +1021,7 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
 class GBFR_OT_ClpDeleteSelection(Operator):
     bl_idname = "gbfr.clp_delete_selection"
     bl_label = "删除所选 CLP 节点"
-    bl_description = "按节点引用名、骨骼固定 ID 和当前导出 ID 删除所选骨骼的节点，并清除悬空引用"
+    bl_description = "删除所选节点及其拓扑末端叶子节点，并清除悬空引用；兼容旧骨号"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -828,9 +1038,13 @@ class GBFR_OT_ClpDeleteSelection(Operator):
                 by_name, _bone_mapping = _export_bone_mapping(armature, state)
             except Exception:
                 by_name = {}
-            remove_indices = _selected_clp_node_indices(
+            explicit_indices = set(_selected_clp_node_indices(
                 group, armature, selected_names, exported_by_name=by_name,
-            )
+            ))
+            terminal_indices = set(_terminal_child_node_indices(
+                group, armature, selected_names, exported_by_name=by_name,
+            ))
+            remove_indices = sorted(explicit_indices | terminal_indices)
             if not remove_indices:
                 raise ValueError("当前 CLP 中没有与所选骨骼对应的节点")
             removed_ids = {int(group.nodes[index].bone) for index in remove_indices}
@@ -851,7 +1065,9 @@ class GBFR_OT_ClpDeleteSelection(Operator):
                     node.suspend_reference_updates = False
             group.active_node_index = min(group.active_node_index, max(0, len(group.nodes) - 1))
             removed_count = len(remove_indices)
-            state.last_status = f"已删除 {removed_count} 个节点并清除 {cleared_count} 个引用，尚未写入 XML"
+            terminal_count = len(terminal_indices - explicit_indices)
+            terminal_detail = f"（含 {terminal_count} 个拓扑尾端）" if terminal_count else ""
+            state.last_status = f"已删除 {removed_count} 个节点{terminal_detail}并清除 {cleared_count} 个引用，尚未写入 XML"
             self.report({"INFO"}, state.last_status)
             _tag_redraw()
             return {"FINISHED"}

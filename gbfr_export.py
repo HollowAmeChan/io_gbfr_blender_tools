@@ -288,12 +288,19 @@ class ExportSomeData(Operator, ImportHelper):
                     targets.reference_skeleton,
                     preserve_reference_skeleton=targets.model_id.lower().startswith("fp"),
                 )
+            cloth_repairs = (0, 0, 0)
+            if cloth_armature is not None:
+                from .gbfr_cloth_blender import prepare_cloth_for_model_export
+                cloth_repairs = prepare_cloth_for_model_export(
+                    cloth_armature, targets.minfo, targets.workspace_json,
+                )
             export_scene = bpy.data.scenes.new(name=f"GBFR Export | {state.model_id}")
             export_collection = bpy.data.collections.new(name="Model")
             export_scene.collection.children.link(export_collection)
             export_root = _duplicate_hierarchy(root, export_collection)
             context.window.scene = export_scene
             context.view_layer.objects.active = export_root
+            exported_bone_names = {}
             export_root.select_set(True)
 
             filled_lods = ()
@@ -302,7 +309,7 @@ class ExportSomeData(Operator, ImportHelper):
 
             with tempfile.TemporaryDirectory(prefix=f"gbfr_v2_{targets.model_id}_") as staging:
                 staging_root = Path(staging)
-                gbfr_model_export_v2.write_some_data(
+                exported_bone_names = gbfr_model_export_v2.write_some_data(
                     context,
                     str(staging_root / f"{targets.model_id}.minfo"),
                     self.export_scale,
@@ -318,14 +325,21 @@ class ExportSomeData(Operator, ImportHelper):
                 from .gbfr_cloth_blender import write_cloth_xml_to_workspace
                 cloth_count = write_cloth_xml_to_workspace(
                     cloth_armature, targets.minfo, targets.workspace_json,
+                    exported_bone_names=exported_bone_names,
                 )
 
             state.workspace_path = str(targets.workspace_json)
             state.resolved_minfo_path = str(targets.minfo)
+            pinned, migrated, deduplicated = cloth_repairs
+            repair_detail = ""
+            if pinned or migrated or deduplicated:
+                repair_detail = (
+                    f"；Cloth 骨号修复 {pinned}，引用迁移 {migrated}，重复节点合并 {deduplicated}"
+                )
             if filled_lods:
-                state.last_status = f"已导出模型和 {cloth_count} 个 Cloth XML 到 unpack；LOD0 补齐 {', '.join(filled_lods)}"
+                state.last_status = f"已导出模型和 {cloth_count} 个 Cloth XML 到 unpack；LOD0 补齐 {', '.join(filled_lods)}{repair_detail}"
             else:
-                state.last_status = f"已导出全部 LOD 和 {cloth_count} 个 Cloth XML 到 unpack"
+                state.last_status = f"已导出全部 LOD 和 {cloth_count} 个 Cloth XML 到 unpack{repair_detail}"
             self.report({"INFO"}, f"已导出到 {targets.workspace_root / 'unpack'}")
             return {"FINISHED"}
         except Exception as error:

@@ -408,6 +408,7 @@ def write_some_data(
 	
 	root_obj = context.object # Get selected object
 	armature_obj = root_obj if root_obj.type == 'ARMATURE' else None # Get the model's armature if it has one
+	exported_bone_names = {}
 	model_name = os.path.splitext(os.path.basename(filepath))[0]
 
 	# Create model folder
@@ -511,12 +512,16 @@ def write_some_data(
 			reference_skeleton = ModelSkeleton.GetRootAs(reference_buffer, 0)
 		if preserve_reference_skeleton and reference_skeleton is None:
 			raise RuntimeError("保留源 skeleton 需要有效的 reference skeleton")
+		exported_bone_names = {
+			bone.name: export_bone_name(bone) for bone in armature_obj.data.bones
+		}
 		if experimental_rename_new_bones and not preserve_reference_skeleton:
 			renamed_bones = rename_new_bones_for_experimental_export(
 				armature_obj, mesh_objects, reference_skeleton
 			)
 			for old_name, new_name in renamed_bones:
 				print(f"Experimental appended bone rename: {old_name} -> {new_name}")
+			exported_bone_names.update(dict(renamed_bones))
 		if preserve_reference_skeleton:
 			bone_name_to_index_dict = {
 				reference_skeleton.Body(index).Name().decode("utf-8"): index
@@ -1054,7 +1059,7 @@ def write_some_data(
 
 	print(f"{root_obj.name} Exported! Model took {time.perf_counter() - total_export_timer_start:.6f} seconds to export!")
 
-	return {'FINISHED'}
+	return exported_bone_names
 
 
 class ExportSomeData(Operator, ExportHelper):
