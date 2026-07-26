@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import shutil
+import struct
 import sys
 import tempfile
 
@@ -19,8 +20,12 @@ bpy.ops.preferences.addon_enable(module="io_gbfr_blender_tools")
 assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINISHED"}
 
 from io_gbfr_blender_tools.Entities.MInfo_ModelInfo.ModelInfo import ModelInfo
+from io_gbfr_blender_tools.Entities.MInfo_ModelInfo.VertexBufferType import VertexBufferType
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
-from io_gbfr_blender_tools.gbfr_model_export_v2 import _allocate_appended_bone_names
+from io_gbfr_blender_tools.gbfr_model_export_v2 import (
+    _allocate_appended_bone_names,
+    quantize_vertex_weights,
+)
 from io_gbfr_blender_tools.gbfr_session import activate_session, session_collections
 from io_gbfr_blender_tools.gbfr_workspace import resolve_model_bundle
 
@@ -28,6 +33,16 @@ occupied_append_names = {f"_{index:03d}" for index in range(1000)}
 assert _allocate_appended_bone_names(
     {"_a79"}, occupied_append_names, 2
 ) == ["_c00", "_c01"]
+assert quantize_vertex_weights([1.0]) == (65535,)
+assert quantize_vertex_weights([0.5, 0.3, 0.2]) == (32768, 19660, 13107)
+assert quantize_vertex_weights([2.0, 1.0]) == (43690, 21845)
+assert sum(quantize_vertex_weights([0.137, 0.219, 0.271, 0.373])) == 65535
+try:
+    quantize_vertex_weights([])
+except ValueError:
+    pass
+else:
+    raise AssertionError("Empty vertex weights must be rejected")
 
 bundle = resolve_model_bundle(minfo)
 session = session_collections(bpy.context.scene)[0]
@@ -146,6 +161,32 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
         lod = model_info.Lods(index)
         final_buffer = lod.Buffers(lod.BuffersLength() - 1)
         assert output.stat().st_size == final_buffer.Offset() + final_buffer.Size()
+        flags = [
+            name
+            for name, value in VertexBufferType.__dict__.items()
+            if not name.startswith("__")
+            and isinstance(value, int)
+            and lod.BufferTypes() & value
+        ]
+        weight_labels = ["BLENDWEIGHT"]
+        if "BLENDWEIGHT_2" in flags:
+            weight_labels.append("BLENDWEIGHT_2")
+        vertex_weight_sums = [0] * lod.VertexCount()
+        output_bytes = output.read_bytes()
+        for label in weight_labels:
+            locator = lod.Buffers(flags.index(label))
+            assert locator.Size() == lod.VertexCount() * 8
+            values = struct.iter_unpack(
+                "<HHHH",
+                output_bytes[locator.Offset():locator.Offset() + locator.Size()],
+            )
+            for vertex_index, row in enumerate(values):
+                vertex_weight_sums[vertex_index] += sum(row)
+        assert set(vertex_weight_sums) == {65535}, (
+            output,
+            min(vertex_weight_sums),
+            max(vertex_weight_sums),
+        )
     assert len({output.read_bytes() for output in regular_lods}) == 1
 
     assert Path(session.gbfr_session.workspace_path) == workspace_path

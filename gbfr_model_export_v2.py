@@ -39,6 +39,33 @@ def bools_to_vertex_flags_sum(flags): # Map bools to bitmask
 def bool_array_to_byte(bool_array):
     return sum((1 << i) for i, enabled in enumerate(bool_array) if enabled)
 
+def quantize_vertex_weights(weights):
+	"""Quantize positive weights to uint16 values whose sum is exactly 65535."""
+	values = [float(weight) for weight in weights]
+	if not values or any(not math.isfinite(weight) or weight <= 0.0 for weight in values):
+		raise ValueError("Vertex weights must contain only positive finite values")
+	total = sum(values)
+	if not math.isfinite(total) or total <= 0.0:
+		raise ValueError("Vertex weight sum must be positive and finite")
+
+	# Blender has already normalized ordinary export data. Preserve values that
+	# are within its float tolerance so duplicated LODs cannot cross a rounding
+	# boundary merely because their sums differ by a few ULPs.
+	normalizer = 1.0 if math.isclose(total, 1.0, rel_tol=0.0, abs_tol=1e-6) else 1.0 / total
+	scaled = [weight * normalizer * 65535.0 for weight in values]
+	quantized = [round(value) for value in scaled]
+	correction = 65535 - sum(quantized)
+	# Correct the dominant integer influence. This preserves independently
+	# rounded minor weights and is stable across duplicated LOD mesh data even
+	# when Blender's float copies differ by a few ULPs.
+	dominant = max(range(len(quantized)), key=lambda index: (quantized[index], -index))
+	quantized[dominant] += correction
+	if any(value < 0 or value > 65535 for value in quantized):
+		raise RuntimeError(f"Quantized vertex weight correction is out of range: {correction}")
+	if sum(quantized) != 65535:
+		raise RuntimeError("Quantized vertex weights do not sum to 65535")
+	return tuple(quantized)
+
 def encode_bone_group_name(group_name): # Encode bone group name to 4-byte little-endian ASCII uint
 	encoded_group_name = group_name if group_name.startswith("_") else f"_{group_name}"
 	encoded_group_name = encoded_group_name[:4].rjust(4, '\x00') # Truncate
@@ -609,6 +636,13 @@ def write_some_data(
 					padding_value = struct.pack('<H', 0)
 					for v_index, v in enumerate(mesh_data.vertices):
 						active_groups = [group for group in v.groups if group.weight > 0.0]
+						if not active_groups:
+							raise UserWarning(format_exception(
+								f"Vertex {v.index} on '{mesh_name}' has no positive bone weights."
+							))
+						quantized_weights = quantize_vertex_weights(
+							[group.weight for group in active_groups]
+						)
 						# if v.index not in mesh_vert_dict:
 						# 	continue # Make sure we're only processing verts we're exporting
 
@@ -630,7 +664,7 @@ def write_some_data(
 								
 								deform_index = deform_index_by_bone_index[bone_index]
 								weight_group_index = struct.pack('<H', deform_index)
-								weight_group_value = struct.pack('<H', round(influence.weight * 65535))
+								weight_group_value = struct.pack('<H', quantized_weights[n])
 								if n<4:
 									weight_id_table.append(weight_group_index)
 									weight_table.append(weight_group_value)
