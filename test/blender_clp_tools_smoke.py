@@ -30,6 +30,7 @@ assert armature is not None and armature.gbfr_cloth.enabled
 state = armature.gbfr_cloth
 create_rna = bpy.ops.gbfr.clp_create_from_selection.get_rna_type()
 assert create_rna.properties["apply_header"].default is False
+assert create_rna.properties["apply_header"].name == "覆盖物理参数"
 targets = resolve_model_export_targets(state.workspace_path, state.model_id)
 source_skeleton = ModelSkeleton.GetRootAs(bytearray(targets.reference_skeleton.read_bytes()), 0)
 

@@ -583,7 +583,11 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         ),
     )
     closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
-    apply_header: BoolProperty(name="套用组参数", default=False, description="同时把预设的 Header 参数写入当前 CLP 组")
+    apply_header: BoolProperty(
+        name="覆盖物理参数",
+        default=False,
+        description="关闭时保留当前 CLP 的 CLOTH_HEADER；开启时用所选物理预设覆盖。新建节点参数始终来自所选预设",
+    )
 
     def invoke(self, context, _event):
         armature = _armature(context)
