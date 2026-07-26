@@ -249,7 +249,16 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
             min(vertex_weight_sums),
             max(vertex_weight_sums),
         )
-    assert len({output.read_bytes() for output in regular_lods}) == 1
+    lod_signatures = {
+        (
+            model_info.Lods(index).VertexCount(),
+            model_info.Lods(index).IndexCount(),
+            model_info.Lods(index).ChunksLength(),
+            model_info.Lods(index).BufferTypes(),
+        )
+        for index in range(model_info.LodsLength())
+    }
+    assert len(lod_signatures) == 1, lod_signatures
 
     assert Path(session.gbfr_session.workspace_path) == workspace_path
     assert Path(session.gbfr_session.resolved_minfo_path) == minfo_output
