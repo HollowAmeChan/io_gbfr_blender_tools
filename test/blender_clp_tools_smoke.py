@@ -194,6 +194,11 @@ assert state.clp_tool_topology == "GRID" and state.clp_tool_closed is True
 by_bone = {node.bone: node for node in group.nodes}
 assert by_bone[a1].side == c1 and by_bone[a2].side == c2
 
+# Simulate a node created by an older plug-in version: its raw ID still drives
+# the preview, but it has no saved Blender bone reference.
+by_bone[a2].suspend_reference_updates = True
+by_bone[a2].bone_ref = ""
+by_bone[a2].suspend_reference_updates = False
 for bone in armature.data.bones:
     bone.select = bone.name == grid_names[1]
 assert bpy.ops.gbfr.clp_delete_selection() == {"FINISHED"}

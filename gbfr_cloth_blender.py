@@ -21,7 +21,7 @@ from .gbfr_cloth_format import (
     CLP_HEADER_FLOATS, CLP_HEADER_INTS, ClhCollision, ClhDocument,
     ClpDocument, ClpNode, MISSING_BONE, load_clh, load_clp, write_clh, write_clp,
 )
-from .gbfr_cloth_tools import PRESETS, SelectedBone, delete_nodes, generate_nodes, preset, rebuild_nodes
+from .gbfr_cloth_tools import PRESETS, SelectedBone, generate_nodes, preset, rebuild_nodes
 from .gbfr_model_export_v2 import appended_bone_export_name_map, export_bone_name
 from .Entities.ModelSkeleton import ModelSkeleton
 from .gbfr_workspace import ModelBundle, resolve_model_bundle, resolve_model_export_targets
@@ -352,6 +352,54 @@ def _refresh_collision_references(layer, armature) -> None:
 
 
 _EXPORTED_BONE_RE = re.compile(r"^_([0-9a-fA-F]{3})$")
+
+
+def _bone_identity_aliases(bone) -> set[str]:
+    aliases = {bone.name}
+    for key in ("gbfr_original_name", "original_name"):
+        value = bone.get(key)
+        if isinstance(value, str) and value:
+            aliases.add(value)
+    return aliases
+
+
+def _selected_clp_node_indices(
+    group, armature, selected_names, exported_by_name=None,
+) -> list[int]:
+    selected_aliases: set[str] = set(selected_names)
+    selected_ids: set[int] = set()
+    exported_by_name = exported_by_name or {}
+    for name in selected_names:
+        bone = armature.data.bones.get(name)
+        if bone is None:
+            continue
+        selected_aliases.update(_bone_identity_aliases(bone))
+        bone_id = _bone_id(bone)
+        if bone_id is not None and 0 <= bone_id < MISSING_BONE:
+            selected_ids.add(bone_id)
+        exported_id = exported_by_name.get(name)
+        if exported_id is not None and 0 <= exported_id < MISSING_BONE:
+            selected_ids.add(exported_id)
+
+    for alias in selected_aliases:
+        match = _EXPORTED_BONE_RE.fullmatch(alias)
+        if match is not None:
+            selected_ids.add(int(match.group(1), 16))
+
+    mapped_names = _bone_map(armature)
+    indices = []
+    for index, node in enumerate(group.nodes):
+        node_id = int(node.bone)
+        reference = str(node.bone_ref or "")
+        if reference in selected_aliases:
+            indices.append(index)
+            continue
+        # A live reference is more authoritative than a coincident stale raw ID.
+        if reference and armature.data.bones.get(reference) is not None:
+            continue
+        if node_id in selected_ids or mapped_names.get(node_id) in selected_aliases:
+            indices.append(index)
+    return indices
 
 
 def _cloth_reserved_bone_names(clp_groups, clh_layers) -> set[str]:
@@ -762,8 +810,8 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
 
 class GBFR_OT_ClpDeleteSelection(Operator):
     bl_idname = "gbfr.clp_delete_selection"
-    bl_label = "精准删除所选 CLP 节点"
-    bl_description = "删除当前 CLP 中与所选骨骼对应的节点，并清除所有悬空引用"
+    bl_label = "删除所选 CLP 节点"
+    bl_description = "按节点引用名、骨骼固定 ID 和当前导出 ID 删除所选骨骼的节点，并清除悬空引用"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -773,17 +821,36 @@ class GBFR_OT_ClpDeleteSelection(Operator):
             return {"CANCELLED"}
         group = state.clp_groups[state.active_clp_index]
         try:
-            by_name, bone_mapping = _export_bone_mapping(armature, state)
             selected_names = set(selected_bone_names(context, armature))
             if not selected_names:
                 raise ValueError("请先选择要从当前 CLP 删除的骨骼")
-            remove_ids = {by_name[name] for name in selected_names if name in by_name}
-            values, removed_count, cleared_count = delete_nodes(
-                [_node_value(value) for value in group.nodes], remove_ids,
+            try:
+                by_name, _bone_mapping = _export_bone_mapping(armature, state)
+            except Exception:
+                by_name = {}
+            remove_indices = _selected_clp_node_indices(
+                group, armature, selected_names, exported_by_name=by_name,
             )
-            if removed_count == 0:
+            if not remove_indices:
                 raise ValueError("当前 CLP 中没有与所选骨骼对应的节点")
-            _replace_group_nodes(group, values, bone_mapping)
+            removed_ids = {int(group.nodes[index].bone) for index in remove_indices}
+            for index in reversed(remove_indices):
+                group.nodes.remove(index)
+            surviving_ids = {int(node.bone) for node in group.nodes}
+            orphaned_ids = removed_ids - surviving_ids
+            cleared_count = 0
+            for node in group.nodes:
+                node.suspend_reference_updates = True
+                try:
+                    for field in ("up", "down", "side", "poly", "fix"):
+                        if int(getattr(node, field)) in orphaned_ids:
+                            setattr(node, field, MISSING_BONE)
+                            setattr(node, field + "_ref", "")
+                            cleared_count += 1
+                finally:
+                    node.suspend_reference_updates = False
+            group.active_node_index = min(group.active_node_index, max(0, len(group.nodes) - 1))
+            removed_count = len(remove_indices)
             state.last_status = f"已删除 {removed_count} 个节点并清除 {cleared_count} 个引用，尚未写入 XML"
             self.report({"INFO"}, state.last_status)
             _tag_redraw()
