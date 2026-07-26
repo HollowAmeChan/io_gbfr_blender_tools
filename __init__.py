@@ -74,27 +74,8 @@ from . import (
 # ImportHelper is a helper class, defines filename and
 # invoke() function which calls the file selector.
 from bpy_extras.io_utils import ImportHelper
-from bpy.props import StringProperty, BoolProperty, EnumProperty
-from bpy.types import Operator
-
-# Addon preferences, where users will specify flatc.exe path
-class AddonPreferences(bpy.types.AddonPreferences):
-    bl_idname = __name__
-    
-    gbfr_data_tools_path: StringProperty(
-        name="GBFRDataTools.exe filepath",
-        description="Optional override used to encode edited cloth XML to BXM",
-        subtype='FILE_PATH',
-    )
-    
-    def draw(self, context):
-        layout = self.layout
-        layout.prop(self, "gbfr_data_tools_path")
-
-
 # Register importer & exporter
 def register():
-    bpy.utils.register_class(AddonPreferences)
     gbfr_session.register()
     gbfr_workspace_ui.register()
     gbfr_import.register()
@@ -113,7 +94,6 @@ def unregister():
     gbfr_panel.unregister()
     gbfr_workspace_ui.unregister()
     gbfr_session.unregister()
-    bpy.utils.unregister_class(AddonPreferences)
 
 #Run the addon
 if __name__ == "__main__":

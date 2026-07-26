@@ -22,6 +22,7 @@ assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINI
 from io_gbfr_blender_tools.Entities.MInfo_ModelInfo.ModelInfo import ModelInfo
 from io_gbfr_blender_tools.Entities.MInfo_ModelInfo.VertexBufferType import VertexBufferType
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
+from io_gbfr_blender_tools.gbfr_cloth_format import load_clp
 from io_gbfr_blender_tools.gbfr_model_export_v2 import (
     _allocate_appended_bone_names,
     quantize_vertex_weights,
@@ -117,12 +118,32 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
             "Output": (Path("build") / relative_path).as_posix(),
         })
 
+    cloth_records = []
+    for record in bundle.cloth_files:
+        xml_relative = record.xml.relative_to(bundle.workspace_root)
+        target_xml = root / xml_relative
+        target_xml.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(record.xml, target_xml)
+        cloth_records.append({
+            "Source": record.source.relative_to(bundle.workspace_root).as_posix(),
+            "Xml": xml_relative.as_posix(),
+            "Output": record.output.relative_to(bundle.workspace_root).as_posix(),
+            "Category": record.category,
+            "GroupId": record.group_id,
+        })
+
+    cloth_state = session_root.gbfr_cloth
+    test_group = next(group for group in cloth_state.clp_groups if group.nodes)
+    test_group.nodes[0].friction += 0.123456
+    expected_friction = test_group.nodes[0].friction
+
     workspace_path = root / "workspace.json"
     workspace_path.write_text(json.dumps({
         "Version": 1,
         "CharacterId": model_id,
         "UnpackRoot": "unpack",
         "ModelFiles": records,
+        "ClothFiles": cloth_records,
     }), encoding="utf-8")
 
     result = bpy.ops.gbfr.export_mesh(
@@ -133,6 +154,14 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
     assert result == {"FINISHED"}, (result, session.gbfr_session.last_status)
     outputs = [root / "unpack" / relative_path for _kind, _source, relative_path in files]
     assert all(path.is_file() and path.stat().st_size > 0 for path in outputs), outputs
+    target_clp_record = next(
+        record for record in cloth_records
+        if record["Category"] == "clp" and record["GroupId"] == test_group.group_id
+    )
+    exported_clp = load_clp(root / target_clp_record["Xml"])
+    assert abs(exported_clp.nodes[0].friction - expected_friction) < 1e-6
+    assert not (root / target_clp_record["Output"]).exists()
+    assert f"{len(cloth_records)} 个 Cloth XML" in session.gbfr_session.last_status
 
     minfo_output = root / "unpack" / files[0][2]
     model_info = ModelInfo.GetRootAs(bytearray(minfo_output.read_bytes()), 0)

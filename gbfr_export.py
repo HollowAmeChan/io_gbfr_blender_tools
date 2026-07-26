@@ -266,11 +266,13 @@ class ExportSomeData(Operator, ImportHelper):
             box.label(text="实验模式：白名单优先 _xxx → _cxx → _axx → _dxx，只改名不改父子关系", icon="INFO")
         if self.fill_missing_lods:
             box.label(text="缺失的低精度 LOD 将在导出时使用 LOD0", icon="DUPLICATE")
+        box.label(text="当前会话的全部 CLP/CLH 将同时写入 unpack XML", icon="PHYSICS")
 
     def execute(self, context):
-        from .gbfr_session import active_session_collection, active_session_root
+        from .gbfr_session import active_session_armature, active_session_collection, active_session_root
         collection = active_session_collection(context)
         root = active_session_root(context)
+        cloth_armature = active_session_armature(context)
         if collection is None or root is None:
             self.report({"ERROR"}, "请先激活一个 minfo 工作区")
             return {"CANCELLED"}
@@ -311,12 +313,19 @@ class ExportSomeData(Operator, ImportHelper):
                 )
                 _install_workspace_export(staging_root, targets)
 
+            cloth_count = 0
+            if cloth_armature is not None:
+                from .gbfr_cloth_blender import write_cloth_xml_to_workspace
+                cloth_count = write_cloth_xml_to_workspace(
+                    cloth_armature, targets.minfo, targets.workspace_json,
+                )
+
             state.workspace_path = str(targets.workspace_json)
             state.resolved_minfo_path = str(targets.minfo)
             if filled_lods:
-                state.last_status = f"已导出到 unpack；LOD0 补齐 {', '.join(filled_lods)}"
+                state.last_status = f"已导出模型和 {cloth_count} 个 Cloth XML 到 unpack；LOD0 补齐 {', '.join(filled_lods)}"
             else:
-                state.last_status = "全部 LOD 已导出到 unpack"
+                state.last_status = f"已导出全部 LOD 和 {cloth_count} 个 Cloth XML 到 unpack"
             self.report({"INFO"}, f"已导出到 {targets.workspace_root / 'unpack'}")
             return {"FINISHED"}
         except Exception as error:

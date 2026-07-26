@@ -118,18 +118,6 @@ class GBFR_OT_RestoreSessionData(Operator):
         return {"FINISHED"}
 
 
-class GBFR_OT_BuildSessionCloth(Operator):
-    bl_idname = "gbfr.build_session_cloth"
-    bl_label = "构建全部 Cloth"
-    bl_description = "将当前 minfo 会话的全部 CLP/CLH 写回 unpack 并编码到 build"
-
-    def execute(self, context):
-        armature = active_session_armature(context)
-        if armature is None or not armature.gbfr_cloth.enabled:
-            return {"CANCELLED"}
-        return bpy.ops.gbfr.cloth_export(kind="ALL")
-
-
 class GBFR_OT_ExportSessionModel(Operator):
     bl_idname = "gbfr.export_session_model"
     bl_label = "导出模型"
@@ -174,10 +162,6 @@ class GBFR_PT_Workspace(Panel):
         controls = layout.row(align=True)
         controls.operator("gbfr.restore_session_data", text="恢复", icon="FILE_REFRESH")
         controls.operator("gbfr.export_session_model", text="导出到工作区", icon="EXPORT")
-        build = controls.row(align=True)
-        armature = active_session_armature(context)
-        build.enabled = bool(armature and armature.gbfr_cloth.enabled)
-        build.operator("gbfr.build_session_cloth", text="构建 Cloth", icon="EXPORT")
 
         if state.last_status and state.last_status not in {"已导入", "已恢复工作区数据"}:
             layout.label(text=state.last_status, icon="INFO")
@@ -248,7 +232,7 @@ class GBFR_PT_SessionMaterials(Panel):
 
 classes = (
     GBFR_MT_Sessions, GBFR_OT_ActivateSession, GBFR_OT_SelectSessionObject,
-    GBFR_OT_RestoreSessionData, GBFR_OT_BuildSessionCloth, GBFR_OT_ExportSessionModel,
+    GBFR_OT_RestoreSessionData, GBFR_OT_ExportSessionModel,
     GBFR_PT_Workspace, GBFR_PT_SessionObjects, GBFR_PT_SessionMaterials,
 )
 

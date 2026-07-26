@@ -6,7 +6,6 @@ import json
 import math
 from pathlib import Path
 import re
-import subprocess
 
 import bpy
 import gpu
@@ -262,7 +261,6 @@ class GBFRClothStateProperties(PropertyGroup):
     minfo_path: StringProperty(name="minfo", subtype="FILE_PATH")
     character_id: StringProperty(name="角色")
     model_id: StringProperty(name="模型")
-    data_tools_path: StringProperty(name="GBFRDataTools", subtype="FILE_PATH")
     clp_groups: CollectionProperty(type=GBFRClpGroupProperties)
     clh_layers: CollectionProperty(type=GBFRClhLayerProperties)
     active_clp_index: IntProperty(default=0, update=_tag_redraw)
@@ -514,11 +512,6 @@ def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> Non
     state.minfo_path = str(bundle.minfo)
     state.character_id = bundle.character_id
     state.model_id = bundle.model_id
-    preference_path = ""
-    addon = bpy.context.preferences.addons.get(__package__)
-    if addon is not None:
-        preference_path = str(getattr(addon.preferences, "gbfr_data_tools_path", "") or "")
-    state.data_tools_path = preference_path if Path(preference_path).is_file() else str(bundle.data_tools or "")
     loaded = [
         (record, load_clp(record.xml) if record.category == "clp" else load_clh(record.xml))
         for record in bundle.cloth_files
@@ -582,40 +575,53 @@ def _collision_value(source) -> ClhCollision:
     return ClhCollision(**values)
 
 
-def _encode_bxm(xml_path: Path, output_path: Path, tool_path: str) -> None:
-    tool = Path(tool_path)
-    if not tool.is_file():
-        raise RuntimeError("未找到 GBFRDataTools.exe；XML 已保存，但未生成 build BXM")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    result = subprocess.run(
-        [str(tool), "xml-to-bxm", "-i", str(xml_path), "-o", str(output_path)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        creationflags=flags,
-    )
-    if result.returncode != 0 or not output_path.is_file():
-        detail = (result.stderr or result.stdout).strip()
-        raise RuntimeError(f"BXM 编码失败: {detail}")
-
-
-def _save_clp(group, tool_path: str) -> None:
-    document = load_clp(group.xml_path)
+def _save_clp_xml(group, destination: Path) -> None:
+    template = destination if destination.is_file() else Path(group.xml_path)
+    document = load_clp(template)
     for name in CLP_HEADER_FLOATS + CLP_HEADER_INTS:
         document.header[name] = getattr(group, _header_attr(name))
     document.header["gravityVec_"] = tuple(group.gravity_vector)
     document.nodes = [_node_value(value) for value in group.nodes]
-    xml_path = write_clp(document)
-    _encode_bxm(xml_path, Path(group.output_path), tool_path)
+    write_clp(document, destination)
+    group.xml_path = str(destination)
 
 
-def _save_clh(layer, tool_path: str) -> None:
-    document = load_clh(layer.xml_path)
+def _save_clh_xml(layer, destination: Path) -> None:
+    template = destination if destination.is_file() else Path(layer.xml_path)
+    document = load_clh(template)
     document.collisions = [_collision_value(value) for value in layer.collisions]
     collision_ids = [value.collision_id for value in document.collisions]
     if len(collision_ids) != len(set(collision_ids)):
         raise ValueError(f"{layer.name} 包含重复 Collision ID")
-    xml_path = write_clh(document)
-    _encode_bxm(xml_path, Path(layer.output_path), tool_path)
+    write_clh(document, destination)
+    layer.xml_path = str(destination)
+
+
+def write_cloth_xml_to_workspace(armature, minfo_path: str | Path, workspace_json: str | Path) -> int:
+    state = getattr(armature, "gbfr_cloth", None)
+    if state is None or not state.enabled:
+        return 0
+    bundle = resolve_model_bundle(minfo_path, workspace_json)
+    clp_by_id = {group.group_id: group for group in state.clp_groups}
+    clh_by_id = {layer.group_id: layer for layer in state.clh_layers}
+    count = 0
+    for record in bundle.cloth_files:
+        if record.category == "clp":
+            group = clp_by_id.get(record.group_id)
+            if group is None:
+                continue
+            _save_clp_xml(group, record.xml)
+            group.output_path = str(record.output)
+        else:
+            layer = clh_by_id.get(record.group_id)
+            if layer is None:
+                continue
+            _save_clh_xml(layer, record.xml)
+            layer.output_path = str(record.output)
+        count += 1
+    state.workspace_path = str(bundle.workspace_json)
+    state.minfo_path = str(bundle.minfo)
+    return count
 
 
 class GBFR_OT_ClothReload(Operator):
@@ -630,38 +636,6 @@ class GBFR_OT_ClothReload(Operator):
         try:
             populate_cloth_state(armature, resolve_model_bundle(armature.gbfr_cloth.minfo_path))
         except Exception as error:
-            self.report({"ERROR"}, str(error))
-            return {"CANCELLED"}
-        return {"FINISHED"}
-
-
-class GBFR_OT_ClothExport(Operator):
-    bl_idname = "gbfr.cloth_export"
-    bl_label = "导出 Cloth"
-    bl_description = "写回 unpack XML 并编码至 workspace build"
-    kind: EnumProperty(items=(("ALL", "全部", ""), ("CLP", "当前 CLP", ""), ("CLH", "当前 CLH", "")), default="ALL")
-
-    def execute(self, context):
-        armature = _armature(context)
-        if armature is None:
-            return {"CANCELLED"}
-        state = armature.gbfr_cloth
-        try:
-            count = 0
-            if self.kind in {"ALL", "CLP"}:
-                groups = list(state.clp_groups) if self.kind == "ALL" else [state.clp_groups[state.active_clp_index]]
-                for group in groups:
-                    _save_clp(group, state.data_tools_path)
-                    count += 1
-            if self.kind in {"ALL", "CLH"}:
-                layers = list(state.clh_layers) if self.kind == "ALL" else [state.clh_layers[state.active_clh_index]]
-                for layer in layers:
-                    _save_clh(layer, state.data_tools_path)
-                    count += 1
-            state.last_status = f"已写回 unpack 并构建 {count} 个 cloth 文件"
-            self.report({"INFO"}, state.last_status)
-        except Exception as error:
-            state.last_status = str(error)
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
         return {"FINISHED"}
@@ -1148,8 +1122,6 @@ class GBFR_PT_ClpEditor(Panel):
         group = state.clp_groups[state.active_clp_index]
         toolbar = layout.row(align=True)
         toolbar.label(text=f"CLP {group.group_id} · {len(group.nodes)} 节点")
-        op = toolbar.operator("gbfr.cloth_export", text="写入当前", icon="EXPORT")
-        op.kind = "CLP"
         layout.prop(state, "clp_edit_mode", expand=True)
         if state.clp_edit_mode == "GROUP":
             _draw_clp_group_editor(layout, armature, state, group)
@@ -1181,8 +1153,6 @@ class GBFR_PT_ClhEditor(Panel):
         layer = state.clh_layers[state.active_clh_index]
         toolbar = layout.row(align=True)
         toolbar.label(text=f"CLH {layer.group_id} · {len(layer.collisions)} 碰撞体")
-        op = toolbar.operator("gbfr.cloth_export", text="写入当前", icon="EXPORT")
-        op.kind = "CLH"
         list_row = layout.row()
         list_row.template_list("GBFR_UL_ClhCollisions", "", layer, "collisions", layer, "active_collision_index", rows=6)
         tools = list_row.column(align=True)
@@ -1402,7 +1372,7 @@ def _draw_overlay():
 classes = (
     GBFRClpNodeProperties, GBFRClpGroupProperties, GBFRClhCollisionProperties,
     GBFRClhLayerProperties, GBFRClothStateProperties, GBFR_OT_ClothReload,
-    GBFR_OT_ClothExport, GBFR_OT_ClpCreateFromSelection,
+    GBFR_OT_ClpCreateFromSelection,
     GBFR_OT_ClpDeleteSelection, GBFR_OT_ClpRebuildConnections,
     GBFR_OT_SelectBoneReference,
     GBFR_OT_ToggleCollisionLayer, GBFR_OT_ClhAddCollision, GBFR_OT_ClhRemoveCollision,

@@ -37,7 +37,6 @@ class ModelBundle:
     sop_report: dict | None
     animations: tuple[Path, ...]
     cloth_files: tuple[ClothFileRecord, ...]
-    data_tools: Path | None
 
     @property
     def mmesh(self) -> Path:
@@ -141,14 +140,6 @@ def _find_mmesh_records(records: list[dict], model_id: str) -> list[dict]:
     if not matches:
         raise WorkspaceError(f"workspace.json 中未登记 {model_id}.mmesh")
     return sorted(matches, key=_stream_record_order)
-
-
-def _find_data_tools(workspace_root: Path) -> Path | None:
-    for directory in (workspace_root, *workspace_root.parents):
-        candidate = directory / "_lib" / "tools" / "GBFRDataTools" / "GBFRDataTools.exe"
-        if candidate.is_file():
-            return candidate.resolve()
-    return None
 
 
 def _read_workspace(workspace_json: str | Path) -> tuple[Path, Path, dict]:
@@ -301,5 +292,4 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         sop_report=sop_report,
         animations=animations,
         cloth_files=tuple(cloth_files),
-        data_tools=_find_data_tools(root),
     )

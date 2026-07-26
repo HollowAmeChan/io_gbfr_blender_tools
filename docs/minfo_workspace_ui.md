@@ -8,8 +8,7 @@
 
 - 导入按钮创建新的 minfo 会话，不覆盖现有会话。
 - “恢复”重新读取当前会话的材质、Cloth XML、SOP 和 MOT 列表，会丢弃这些中间态的当前编辑；它不会重新创建 Mesh 或 Armature。
-- “导出到工作区”先锁定当前会话根对象，再让用户选择 `workspace.json`。文件选择器会在确认前列出模型 ID，以及将覆盖的 `.minfo`、`.skeleton` 和全部 `lod#`/`shadowlod#` `.mmesh` 路径，并明确提示不会写入 `build`。插件复制当前会话的完整层级到临时场景，由 v2 构建器直接生成二进制并原子覆盖 `unpack`；不使用其他 Collection 中的活动对象，也不生成 `_Exported_MInfo` 或中间 JSON。
-- “构建 Cloth”只写回当前会话的全部 CLP/CLH，并编码到该工作区的 build 路径。
+- “导出到工作区”先锁定当前会话根对象，再让用户选择 `workspace.json`。文件选择器会在确认前列出模型 ID，以及将覆盖的 `.minfo`、`.skeleton` 和全部 `lod#`/`shadowlod#` `.mmesh` 路径，并明确提示不会写入 `build`。插件复制当前会话的完整层级到临时场景，由 v2 构建器直接生成二进制并原子覆盖 `unpack`，同时把当前全部 CLP/CLH 写入目标 workspace 登记的 `unpack` XML；不使用其他 Collection 中的活动对象，也不生成 `_Exported_MInfo`、BXM 或中间 JSON。
 - “对象”面板只选择或控制当前会话记录的模型根对象、Armature、主 Mesh 与 Collection；材质摘要会统计全部 LOD 下的 Mesh。
 - “材质”“Cloth”“SOP 约束”“MOT 动画”都是中控子面板，只解析当前会话。
 
