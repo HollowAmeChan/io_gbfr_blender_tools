@@ -35,7 +35,7 @@ bpy.context.view_layer.objects.active = armature
 armature.select_set(True)
 bpy.ops.object.mode_set(mode="EDIT")
 parent = armature.data.edit_bones[6]
-names = []
+grid_names = []
 for chain_name, x in (("CLP_TEST_A", -0.02), ("CLP_TEST_B", 0.0), ("CLP_TEST_C", 0.02)):
     previous = parent
     for depth in range(1, 3):
@@ -44,16 +44,37 @@ for chain_name, x in (("CLP_TEST_A", -0.02), ("CLP_TEST_B", 0.0), ("CLP_TEST_C",
         bone.tail = (x, 0.02 * depth + 0.015, 0.0)
         bone.parent = previous
         previous = bone
-        names.append(bone.name)
+        grid_names.append(bone.name)
+
+fork_names = []
+
+
+def add_fork_bone(name, parent_bone, x, depth):
+    bone = armature.data.edit_bones.new(name)
+    bone.head = (x, 0.02 * depth, 0.03)
+    bone.tail = (x, 0.02 * depth + 0.015, 0.03)
+    bone.parent = parent_bone
+    fork_names.append(bone.name)
+    return bone
+
+
+fork_01 = add_fork_bone("CLP_FORK_01", parent, 0.05, 1)
+fork_02 = add_fork_bone("CLP_FORK_02", fork_01, 0.05, 2)
+fork_03 = add_fork_bone("CLP_FORK_03", fork_02, 0.05, 3)
+fork_a_04 = add_fork_bone("CLP_FORK_A_04", fork_03, 0.04, 4)
+add_fork_bone("CLP_FORK_A_05", fork_a_04, 0.04, 5)
+fork_b_04 = add_fork_bone("CLP_FORK_B_04", fork_03, 0.06, 4)
+add_fork_bone("CLP_FORK_B_05", fork_b_04, 0.06, 5)
 bpy.ops.object.mode_set(mode="OBJECT")
 
 for bone in armature.data.bones:
-    bone.select = bone.name in names
+    bone.select = bone.name in grid_names
 mesh_objects = [value for value in armature.children_recursive if value.type == "MESH"]
 expected_names = appended_bone_export_name_map(armature, mesh_objects, source_skeleton)
 export_ids = _export_bone_ids(armature, state)
-assert set(names) <= set(expected_names)
-for name in names:
+all_names = grid_names + fork_names
+assert set(all_names) <= set(expected_names)
+for name in all_names:
     assert export_ids[name] == int(expected_names[name][1:], 16)
 
 state.active_clp_index = next(index for index, group in enumerate(state.clp_groups) if group.group_id == 2)
@@ -65,7 +86,7 @@ assert bpy.ops.gbfr.clp_create_from_selection(replace_existing=True) == {"FINISH
 group = state.clp_groups[state.active_clp_index]
 assert len(group.nodes) == 6
 by_bone = {node.bone: node for node in group.nodes}
-a1, a2, b1, b2, c1, c2 = (export_ids[name] for name in names)
+a1, a2, b1, b2, c1, c2 = (export_ids[name] for name in grid_names)
 assert by_bone[a1].down == a2 and by_bone[a2].up == a1
 assert by_bone[b1].side == a1 and by_bone[b1].poly == a1
 assert by_bone[b2].side == a2 and by_bone[b2].poly == a2
@@ -77,12 +98,35 @@ by_bone = {node.bone: node for node in group.nodes}
 assert by_bone[a1].side == c1 and by_bone[a2].side == c2
 
 for bone in armature.data.bones:
-    bone.select = bone.name == names[1]
+    bone.select = bone.name == grid_names[1]
 assert bpy.ops.gbfr.clp_delete_selection(include_descendants=False) == {"FINISHED"}
 by_bone = {node.bone: node for node in group.nodes}
 assert a2 not in by_bone
 assert by_bone[a1].down == 4095
 assert by_bone[b2].side == 4095 and by_bone[b2].poly == 4095
+
+for bone in armature.data.bones:
+    bone.select = bone.name in fork_names
+state.clp_tool_preset = "LONG_HAIR"
+state.clp_tool_topology = "GRID"
+try:
+    bpy.ops.gbfr.clp_create_from_selection(replace_existing=True)
+except RuntimeError as error:
+    assert "分叉" in str(error)
+else:
+    raise AssertionError("grid topology unexpectedly accepted a fork")
+state.clp_tool_topology = "CHAINS"
+state.clp_tool_closed = False
+assert bpy.ops.gbfr.clp_create_from_selection(replace_existing=True) == {"FINISHED"}
+group = state.clp_groups[state.active_clp_index]
+assert len(group.nodes) == 7
+by_bone = {node.bone: node for node in group.nodes}
+f1, f2, f3, fa4, fa5, fb4, fb5 = (export_ids[name] for name in fork_names)
+assert by_bone[f1].down == f2 and by_bone[f2].down == f3
+assert by_bone[f3].down == 4095
+assert by_bone[fa4].up == 4095 and by_bone[fa4].down == fa5
+assert by_bone[fb4].up == 4095 and by_bone[fb4].down == fb5
+assert all(node.side == 4095 and node.poly == 4095 for node in group.nodes)
 
 rename_records = dict(rename_new_bones_for_experimental_export(armature, mesh_objects, source_skeleton))
 assert rename_records == expected_names

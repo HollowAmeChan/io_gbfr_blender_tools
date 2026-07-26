@@ -198,7 +198,7 @@ def preset(key: str) -> ClpPreset:
         raise ValueError(f"未知 CLP 预设: {key}") from error
 
 
-def build_chains(selected: Iterable[SelectedBone]) -> list[list[SelectedBone]]:
+def build_chains(selected: Iterable[SelectedBone], allow_branches: bool = False) -> list[list[SelectedBone]]:
     values = list(selected)
     if not values:
         raise ValueError("请先选择至少一根骨骼")
@@ -222,20 +222,30 @@ def build_chains(selected: Iterable[SelectedBone]) -> list[list[SelectedBone]]:
         raise ValueError("所选骨骼没有 root；请检查父子关系是否形成循环")
     chains: list[list[SelectedBone]] = []
     visited: set[str] = set()
-    for root in sorted(roots, key=lambda item: item.name):
+
+    def append_segment(start: SelectedBone) -> None:
         chain: list[SelectedBone] = []
-        current = root
+        current: SelectedBone | None = start
         while current is not None:
             if current.name in visited:
                 raise ValueError(f"骨骼层级存在循环或重复路径: {current.name}")
             visited.add(current.name)
             chain.append(current)
-            current_children = children[current.name]
-            if len(current_children) > 1:
-                names = ", ".join(child.name for child in current_children)
+            current_children = sorted(children[current.name], key=lambda item: item.name)
+            if len(current_children) <= 1:
+                current = current_children[0] if current_children else None
+                continue
+            names = ", ".join(child.name for child in current_children)
+            if not allow_branches:
                 raise ValueError(f"骨链 {current.name} 出现分叉: {names}")
-            current = current_children[0] if current_children else None
+            chains.append(chain)
+            for child in current_children:
+                append_segment(child)
+            return
         chains.append(chain)
+
+    for root in sorted(roots, key=lambda item: item.name):
+        append_segment(root)
     if len(visited) != len(values):
         missing = sorted(set(by_name) - visited)
         raise ValueError(f"无法从 root 解析所选骨链: {', '.join(missing[:8])}")
@@ -272,7 +282,7 @@ def generate_nodes(selected: Iterable[SelectedBone], preset_key: str, topology: 
     topology = topology or chosen_preset.topology
     if topology not in {"CHAINS", "GRID"}:
         raise ValueError(f"未知 CLP 拓扑模式: {topology}")
-    chains = build_chains(selected)
+    chains = build_chains(selected, allow_branches=topology == "CHAINS")
     links = _topology_links(chains, topology, closed)
     max_depth = max(len(chain) for chain in chains) - 1
     nodes: list[ClpNode] = []
@@ -317,7 +327,7 @@ def rebuild_nodes(nodes: Iterable[ClpNode], bones: Iterable[SelectedBone], topol
     values = list(nodes)
     by_id = {node.bone: node for node in values}
     selected = [bone for bone in bones if bone.bone_id in by_id]
-    chains = build_chains(selected)
+    chains = build_chains(selected, allow_branches=topology == "CHAINS")
     links = _topology_links(chains, topology, closed)
     result: list[ClpNode] = []
     for chain in chains:
