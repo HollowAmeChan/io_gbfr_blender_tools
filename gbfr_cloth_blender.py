@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 import re
@@ -26,6 +27,7 @@ from .gbfr_model_export_v2 import appended_bone_export_name_map, export_bone_nam
 from .Entities.ModelSkeleton import ModelSkeleton
 from .gbfr_workspace import ModelBundle, resolve_model_bundle, resolve_model_export_targets
 from .gbfr_cloth_metadata import CLP_HEADER_GROUPS, CLP_HEADER_UI
+from .gbfr_bone_selection import selected_bone_names
 from .gbfr_session import active_session_armature
 from .utils import bone_names_mapping
 
@@ -382,18 +384,26 @@ def _export_bone_mapping(armature, state) -> tuple[dict[str, int], dict[int, str
     return by_name, {bone_id: name for name, bone_id in by_name.items()}
 
 
-def _selected_bones(armature, by_name: dict[str, int], selected_only=True) -> list[SelectedBone]:
+def _selected_bones(context, armature, by_name: dict[str, int], selected_only=True, selected_names=None) -> list[SelectedBone]:
     result = []
-    for bone in armature.data.bones:
-        if selected_only and not bone.select:
+    names = (
+        list(selected_names) if selected_names is not None
+        else selected_bone_names(context, armature) if selected_only
+        else [bone.name for bone in armature.data.bones]
+    )
+    for name in names:
+        bone = armature.data.bones.get(name)
+        if bone is None:
+            if selected_only:
+                raise RuntimeError(f"骨骼 {name} 尚未同步到对象数据；请退出编辑模式后重试")
             continue
-        bone_id = by_name.get(bone.name)
+        bone_id = by_name.get(name)
         if bone_id is None:
             if selected_only:
-                raise RuntimeError(f"骨骼 {bone.name} 无法映射为模型导出的 _xxx 编号")
+                raise RuntimeError(f"骨骼 {name} 无法映射为模型导出的 _xxx 编号")
             continue
         result.append(SelectedBone(
-            name=bone.name,
+            name=name,
             bone_id=bone_id,
             parent_name=bone.parent.name if bone.parent else None,
         ))
@@ -588,6 +598,7 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         default=False,
         description="关闭时保留当前 CLP 的 CLOTH_HEADER；开启时用所选物理预设覆盖。新建节点参数始终来自所选预设",
     )
+    selected_bones_json: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
         armature = _armature(context)
@@ -595,6 +606,11 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         if not state or not state.enabled or not state.clp_groups:
             self.report({"ERROR"}, "请先载入包含 CLP 的模型工作区")
             return {"CANCELLED"}
+        names = selected_bone_names(context, armature)
+        if not names:
+            self.report({"ERROR"}, "请先选择要创建 CLP 的骨骼")
+            return {"CANCELLED"}
+        self.selected_bones_json = json.dumps(names, ensure_ascii=False)
         self.preset_key = state.clp_tool_preset
         self.topology = state.clp_tool_topology
         self.closed = state.clp_tool_closed
@@ -625,7 +641,8 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         group = state.clp_groups[state.active_clp_index]
         try:
             by_name, bone_mapping = _export_bone_mapping(armature, state)
-            selected = _selected_bones(armature, by_name)
+            snapshot = json.loads(self.selected_bones_json) if self.selected_bones_json else None
+            selected = _selected_bones(context, armature, by_name, selected_names=snapshot)
             generated, selected_preset, chains = generate_nodes(
                 selected,
                 self.preset_key,
@@ -670,7 +687,7 @@ class GBFR_OT_ClpDeleteSelection(Operator):
         group = state.clp_groups[state.active_clp_index]
         try:
             by_name, bone_mapping = _export_bone_mapping(armature, state)
-            selected_names = {bone.name for bone in armature.data.bones if bone.select}
+            selected_names = set(selected_bone_names(context, armature))
             if not selected_names:
                 raise ValueError("请先选择要从当前 CLP 删除的骨骼")
             remove_ids = {by_name[name] for name in selected_names if name in by_name}
@@ -731,7 +748,7 @@ class GBFR_OT_ClpRebuildConnections(Operator):
             return {"CANCELLED"}
         try:
             by_name, bone_mapping = _export_bone_mapping(armature, state)
-            bones = _selected_bones(armature, by_name, selected_only=False)
+            bones = _selected_bones(context, armature, by_name, selected_only=False)
             mapped_ids = {bone.bone_id for bone in bones}
             missing = [value.bone for value in group.nodes if value.bone not in mapped_ids]
             if missing:

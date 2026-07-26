@@ -16,6 +16,7 @@ bpy.ops.preferences.addon_enable(module="io_gbfr_blender_tools")
 assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINISHED"}
 
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
+from io_gbfr_blender_tools.gbfr_bone_selection import selected_bone_names
 from io_gbfr_blender_tools.gbfr_cloth_blender import _export_bone_ids
 from io_gbfr_blender_tools.gbfr_model_export_v2 import (
     appended_bone_export_name_map,
@@ -69,6 +70,9 @@ add_fork_bone("CLP_FORK_A_05", fork_a_04, 0.04, 5)
 fork_b_04 = add_fork_bone("CLP_FORK_B_04", fork_03, 0.06, 4)
 fork_b_05 = add_fork_bone("CLP_FORK_B_05", fork_b_04, 0.06, 5)
 add_fork_bone("CLP_FORK_B_06", fork_b_05, 0.06, 6)
+for bone in armature.data.edit_bones:
+    bone.select = bone.select_head = bone.select_tail = bone.name in grid_names
+assert set(selected_bone_names(bpy.context, armature)) == set(grid_names)
 bpy.ops.object.mode_set(mode="OBJECT")
 
 for bone in armature.data.bones:
