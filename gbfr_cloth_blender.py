@@ -612,8 +612,6 @@ class GBFR_OT_ClpDeleteSelection(Operator):
     bl_description = "删除当前 CLP 中与所选骨骼对应的节点，并清除所有悬空引用"
     bl_options = {"REGISTER", "UNDO"}
 
-    include_descendants: BoolProperty(default=False, options={"SKIP_SAVE"})
-
     def execute(self, context):
         armature = _armature(context)
         state = armature.gbfr_cloth if armature else None
@@ -625,14 +623,6 @@ class GBFR_OT_ClpDeleteSelection(Operator):
             selected_names = {bone.name for bone in armature.data.bones if bone.select}
             if not selected_names:
                 raise ValueError("请先选择要从当前 CLP 删除的骨骼")
-            if self.include_descendants:
-                for bone in armature.data.bones:
-                    parent = bone
-                    while parent is not None:
-                        if parent.name in selected_names:
-                            selected_names.add(bone.name)
-                            break
-                        parent = parent.parent
             remove_ids = {by_name[name] for name in selected_names if name in by_name}
             values, removed_count, cleared_count = delete_nodes(
                 [_node_value(value) for value in group.nodes], remove_ids,

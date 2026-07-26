@@ -274,12 +274,8 @@ class GBFRToolPanel_RestoredUtilities(bpy.types.Panel):
 				replace = create.operator("gbfr.clp_create_from_selection", text="替换当前组", icon='FILE_REFRESH')
 				replace.replace_existing = True
 
-				remove = panel.row(align=True)
-				exact = remove.operator("gbfr.clp_delete_selection", text="删除所选", icon='REMOVE')
-				exact.include_descendants = False
-				subtree = remove.operator("gbfr.clp_delete_selection", text="删除所选及后代", icon='TRASH')
-				subtree.include_descendants = True
-				panel.operator("gbfr.clp_rebuild_connections", text="仅重建连接", icon='NODETREE')
+				panel.operator("gbfr.clp_delete_selection", text="删除所选", icon='REMOVE')
+				panel.operator("gbfr.clp_rebuild_connections", text="重建连接（保留节点参数）", icon='NODETREE')
 				if state.last_status:
 					panel.label(text=state.last_status, icon='INFO')
 

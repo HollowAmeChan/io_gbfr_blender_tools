@@ -101,7 +101,7 @@ assert by_bone[a1].side == c1 and by_bone[a2].side == c2
 
 for bone in armature.data.bones:
     bone.select = bone.name == grid_names[1]
-assert bpy.ops.gbfr.clp_delete_selection(include_descendants=False) == {"FINISHED"}
+assert bpy.ops.gbfr.clp_delete_selection() == {"FINISHED"}
 by_bone = {node.bone: node for node in group.nodes}
 assert a2 not in by_bone
 assert by_bone[a1].down == 4095
