@@ -649,6 +649,14 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
                 self.topology,
                 self.closed,
             )
+            selected_ids = {bone.bone_id for bone in selected}
+            for node in generated:
+                for field in ("up", "down", "side", "poly", "fix"):
+                    target = getattr(node, field)
+                    if target != MISSING_BONE and target not in selected_ids:
+                        raise RuntimeError(
+                            f"生成连接越过本次骨骼选择: {node.bone}.{field} -> {target}"
+                        )
             state.clp_tool_preset = self.preset_key
             state.clp_tool_topology = self.topology
             state.clp_tool_closed = self.closed

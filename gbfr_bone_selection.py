@@ -28,19 +28,32 @@ def _belongs_to_armature(bone, armature) -> bool:
     return False
 
 
-def selected_edit_bones(context, armature) -> list:
-    if not _is_armature(armature) or armature.mode != "EDIT":
-        return []
-    result = []
-    seen_names = set()
-    edit_bones = armature.data.edit_bones
-    for attr in ("selected_editable_bones", "selected_bones"):
+def _context_selected_bones(context, armature, bones, attributes) -> list:
+    for attr in attributes:
+        result = []
+        seen_names = set()
         for candidate in getattr(context, attr, None) or []:
             if not _belongs_to_armature(candidate, armature):
                 continue
-            bone = edit_bones.get(getattr(candidate, "name", ""))
+            bone = bones.get(getattr(candidate, "name", ""))
             if bone is not None:
                 _append_unique(result, seen_names, bone)
+        if result:
+            return result
+    return []
+
+
+def selected_edit_bones(context, armature) -> list:
+    if not _is_armature(armature) or armature.mode != "EDIT":
+        return []
+    edit_bones = armature.data.edit_bones
+    result = _context_selected_bones(
+        context, armature, edit_bones,
+        ("selected_editable_bones", "selected_bones"),
+    )
+    if result:
+        return result
+    seen_names = set()
     for bone in edit_bones:
         if (
             getattr(bone, "select", False)
@@ -60,16 +73,14 @@ def _pose_bone_is_selected(pose_bone) -> bool:
 def selected_pose_bones(context, armature) -> list:
     if not _is_armature(armature) or armature.pose is None:
         return []
-    result = []
-    seen_names = set()
     pose_bones = armature.pose.bones
-    for attr in ("selected_pose_bones_from_active_object", "selected_pose_bones"):
-        for candidate in getattr(context, attr, None) or []:
-            if not _belongs_to_armature(candidate, armature):
-                continue
-            bone = pose_bones.get(getattr(candidate, "name", ""))
-            if bone is not None:
-                _append_unique(result, seen_names, bone)
+    result = _context_selected_bones(
+        context, armature, pose_bones,
+        ("selected_pose_bones_from_active_object", "selected_pose_bones"),
+    )
+    if result:
+        return result
+    seen_names = set()
     for bone in pose_bones:
         if _pose_bone_is_selected(bone):
             _append_unique(result, seen_names, bone)
@@ -83,6 +94,8 @@ def selected_bone_names(context, armature) -> list[str]:
     if armature.mode == "EDIT":
         return [bone.name for bone in selected_edit_bones(context, armature)]
     names = [bone.name for bone in selected_pose_bones(context, armature)]
+    if armature.mode == "POSE":
+        return names
     seen_names = set(names)
     for bone in armature.data.bones:
         if getattr(bone, "select", False) and bone.name not in seen_names:
