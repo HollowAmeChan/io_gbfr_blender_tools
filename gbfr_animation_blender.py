@@ -68,7 +68,6 @@ class GBFRAnimationStateProperties(PropertyGroup):
     animations: CollectionProperty(type=GBFRAnimationEntryProperties)
     active_animation_index: IntProperty(default=0, update=_selection_update)
     suspend_updates: BoolProperty(default=False)
-    export_paths_initialized: BoolProperty(default=False)
     preview_active: BoolProperty(default=False)
     export_preview_active: BoolProperty(default=False)
     export_preview_entry_name: StringProperty()
@@ -292,7 +291,6 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
     state = armature.gbfr_animation
     _stop_preview(armature)
     state.enabled = False
-    state.export_paths_initialized = False
     state.suspend_updates = True
     state.animations.clear()
     state.minfo_path = str(bundle.minfo)
@@ -335,7 +333,6 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
     state.active_animation_index = 0
     state.suspend_updates = False
     state.enabled = bool(state.animations)
-    state.export_paths_initialized = True
     imported = sum(_entry_action(entry) is not None for entry in state.animations)
     if state.active_action_name and bpy.data.actions.get(state.active_action_name) is None:
         state.active_action_name = ""
@@ -1292,25 +1289,6 @@ def _entry_has_exported_file(item) -> bool:
     return item.export_exists
 
 
-def _ensure_export_paths(state) -> None:
-    if state.export_paths_initialized or not state.minfo_path.strip():
-        return
-    try:
-        bundle = resolve_model_bundle(state.minfo_path)
-    except Exception:
-        return
-    assets = {asset.name.casefold(): asset for asset in bundle.animations}
-    for item in state.animations:
-        asset = assets.get(item.name.casefold())
-        if asset is None:
-            continue
-        item.unpack_path = str(asset.unpack)
-        item.export_exists = asset.unpack.is_file()
-        if not item.source_path and asset.source is not None:
-            item.source_path = str(asset.source)
-    state.export_paths_initialized = True
-
-
 class GBFR_UL_Animations(UIList):
     def draw_item(self, _context, layout, data, item, _icon, _active_data, _active_propname, index):
         row = layout.row(align=True)
@@ -1383,7 +1361,6 @@ class GBFR_PT_AnimationPreview(Panel):
     def draw(self, context):
         armature = _armature(context)
         state = armature.gbfr_animation
-        _ensure_export_paths(state)
         layout = self.layout
         row = layout.row(align=True)
         row.prop(state, "search", text="", icon="VIEWZOOM")
