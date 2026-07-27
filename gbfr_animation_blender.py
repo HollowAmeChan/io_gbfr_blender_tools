@@ -1012,14 +1012,20 @@ def _armature(context):
     return active_session_armature(context)
 
 
+def _entry_annotation(item) -> str:
+    return guess_mot_annotation(item.name or item.display_name)
+
+
 class GBFR_UL_Animations(UIList):
     def draw_item(self, _context, layout, data, item, _icon, _active_data, _active_propname, index):
         row = layout.row(align=True)
         action = _entry_action(item)
         active = action is not None and data.active_action_name == action.name
-        row.label(text=item.display_name, icon="CHECKMARK" if active else "ACTION")
-        if item.guessed_annotation:
-            row.label(text=f"{item.guessed_annotation}?", icon="QUESTION")
+        annotation = _entry_annotation(item)
+        display_name = item.display_name
+        if annotation:
+            display_name += f"  [推测：{annotation}]"
+        row.label(text=display_name, icon="CHECKMARK" if active else "ACTION")
         row.label(text=f"{item.frame_count}f")
         if action is None:
             operator = row.operator("gbfr.animation_import_action", text="", icon="IMPORT")
@@ -1044,7 +1050,7 @@ class GBFR_UL_Animations(UIList):
                 not query
                 or query in item.display_name.casefold()
                 or query in item.internal_name.casefold()
-                or query in item.guessed_annotation.casefold()
+                or query in _entry_annotation(item).casefold()
             )
             else 0
             for item in values
@@ -1084,12 +1090,13 @@ class GBFR_PT_AnimationPreview(Panel):
             controls.label(text="源 MOT", icon="FILE_MOVIE")
         if state.animations:
             item = state.animations[state.active_animation_index]
+            annotation = _entry_annotation(item)
             details = layout.row(align=True)
             details.label(text=item.internal_name or item.display_name, icon="ACTION")
             details.label(text=f"{item.frame_count}f · {item.track_count}轨")
-            if item.guessed_annotation:
+            if annotation:
                 layout.label(
-                    text=f"文件名推测：{item.guessed_annotation}", icon="QUESTION",
+                    text=f"文件名推测：{annotation}", icon="QUESTION",
                 )
             if state.preview_active or imported:
                 layout.prop(context.scene, "frame_current", text="帧")

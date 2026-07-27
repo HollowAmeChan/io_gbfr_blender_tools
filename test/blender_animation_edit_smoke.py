@@ -16,7 +16,7 @@ assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINI
 
 from io_gbfr_blender_tools.gbfr_animation import load_mot
 from io_gbfr_blender_tools.gbfr_animation_blender import (
-    _entry_action, _entry_edit_action, _has_imported_actions,
+    _entry_action, _entry_annotation, _entry_edit_action, _has_imported_actions,
     load_selected_animation,
 )
 from io_gbfr_blender_tools.gbfr_session import active_session_armature
@@ -35,6 +35,8 @@ assert annotations["fp1400_034a"] == "闭眼"
 assert annotations["fp1400_035a"] == "紧闭眼"
 assert annotations["fp1400_036a"] == "舒张闭眼"
 assert annotations["fp1400_e00a"] == "闭眼笑"
+e00a = next(item for item in state.animations if item.display_name == "fp1400_e00a")
+assert _entry_annotation(e00a) == "闭眼笑"
 assert all(
     annotation == "口型"
     for name, annotation in annotations.items()
