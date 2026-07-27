@@ -34,6 +34,7 @@ _MANAGED_NLA_PREFIX = "[GBFR MOT]"
 class GBFRAnimationEntryProperties(PropertyGroup):
     path: StringProperty(name="MOT", subtype="FILE_PATH")
     source_path: StringProperty(name="源 MOT", subtype="FILE_PATH")
+    template_path: StringProperty(name="Action 模板 MOT", subtype="FILE_PATH")
     unpack_path: StringProperty(name="unpack MOT", subtype="FILE_PATH")
     display_name: StringProperty(name="名称")
     internal_name: StringProperty(name="内部名称")
@@ -67,6 +68,7 @@ class GBFRAnimationStateProperties(PropertyGroup):
     animations: CollectionProperty(type=GBFRAnimationEntryProperties)
     active_animation_index: IntProperty(default=0, update=_selection_update)
     suspend_updates: BoolProperty(default=False)
+    export_paths_initialized: BoolProperty(default=False)
     preview_active: BoolProperty(default=False)
     export_preview_active: BoolProperty(default=False)
     export_preview_entry_name: StringProperty()
@@ -118,6 +120,7 @@ def _tag_action(action, state, entry, role: str) -> None:
     action[_ACTION_FILENAME] = entry.name
     action[_ACTION_ROLE] = role
     action["gbfr_mot_source_path"] = entry.source_path
+    action["gbfr_mot_template_path"] = _entry_template_path(entry)
     action["gbfr_mot_unpack_path"] = entry.unpack_path
     action["gbfr_mot_model_id"] = state.model_id
     action["gbfr_mot_frame_count"] = int(entry.frame_count)
@@ -255,7 +258,7 @@ def load_selected_animation(armature, scene):
         raise ValueError("当前会话已有可编辑 Action；源 MOT 直接预览已禁用")
     index = min(max(state.active_animation_index, 0), len(state.animations) - 1)
     entry = state.animations[index]
-    clip = load_mot(entry.path)
+    clip = load_mot(_entry_source_preview_path(entry))
     _start_runtime_preview(armature, scene, clip)
     state.last_status = (
         f"正在预览 {entry.display_name}：{clip.frame_count} 帧 / {len(clip.tracks)} 轨道"
@@ -289,6 +292,7 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
     state = armature.gbfr_animation
     _stop_preview(armature)
     state.enabled = False
+    state.export_paths_initialized = False
     state.suspend_updates = True
     state.animations.clear()
     state.minfo_path = str(bundle.minfo)
@@ -316,6 +320,12 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
             edit = _find_saved_action(state, item.name, _ROLE_EDIT)
             item.action_name = base.name if base is not None else ""
             item.edit_action_name = edit.name if edit is not None else ""
+            if base is not None:
+                item.template_path = str(
+                    base.get("gbfr_mot_template_path")
+                    or base.get("gbfr_mot_imported_from_unpack")
+                    or ""
+                )
             item.passthrough_track_count = (
                 int(base.get("gbfr_mot_passthrough_tracks", 0))
                 if base is not None else 0
@@ -325,6 +335,7 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
     state.active_animation_index = 0
     state.suspend_updates = False
     state.enabled = bool(state.animations)
+    state.export_paths_initialized = True
     imported = sum(_entry_action(entry) is not None for entry in state.animations)
     if state.active_action_name and bpy.data.actions.get(state.active_action_name) is None:
         state.active_action_name = ""
@@ -613,7 +624,22 @@ def _sample_bound_action_for_template(armature, clip: AnimationClip, scene):
 
 
 def _entry_template_path(entry) -> str:
-    return entry.path
+    if entry.template_path.strip():
+        return entry.template_path
+    action = _entry_action(entry)
+    if action is not None:
+        saved = (
+            action.get("gbfr_mot_template_path")
+            or action.get("gbfr_mot_imported_from_unpack")
+        )
+        if saved:
+            entry.template_path = str(saved)
+            return entry.template_path
+    return entry.source_path or entry.path
+
+
+def _entry_source_preview_path(entry) -> str:
+    return entry.source_path or entry.path
 
 
 def _entry_unpack_path(armature, entry) -> Path:
@@ -923,7 +949,7 @@ class GBFR_OT_AnimationReimportExported(Operator):
         old_edit = _entry_edit_action(entry)
         previous = _action_entry(state, state.active_action_name)
         old_values = {
-            "path": entry.path,
+            "template_path": entry.template_path,
             "action_name": entry.action_name,
             "edit_action_name": entry.edit_action_name,
             "frame_count": entry.frame_count,
@@ -943,7 +969,7 @@ class GBFR_OT_AnimationReimportExported(Operator):
             if state.export_preview_active:
                 _stop_preview(armature)
             _detach_action_stack(armature)
-            entry.path = str(destination)
+            entry.template_path = str(destination)
             entry.frame_count = clip.frame_count
             entry.track_count = len(clip.tracks)
             entry.internal_name = clip.name
@@ -952,6 +978,7 @@ class GBFR_OT_AnimationReimportExported(Operator):
             )
             imported["gbfr_mot_passthrough_tracks"] = len(passthrough)
             imported["gbfr_mot_imported_from_unpack"] = str(destination)
+            imported["gbfr_mot_template_path"] = str(destination)
             entry.action_name = imported.name
             entry.edit_action_name = ""
             entry.passthrough_track_count = len(passthrough)
@@ -1022,6 +1049,9 @@ class GBFR_OT_AnimationRemoveAction(Operator):
             _reset_pose(armature)
         entry.action_name = ""
         entry.edit_action_name = ""
+        entry.template_path = ""
+        if entry.source_path:
+            entry.path = entry.source_path
         entry.passthrough_track_count = 0
         entry.validation_status = ""
         if edit is not None:
@@ -1255,6 +1285,32 @@ def _entry_annotation(item) -> str:
     return guess_mot_annotation(item.name or item.display_name)
 
 
+def _entry_has_exported_file(item) -> bool:
+    cached = item.unpack_path.strip()
+    if cached:
+        return Path(bpy.path.abspath(cached)).expanduser().is_file()
+    return item.export_exists
+
+
+def _ensure_export_paths(state) -> None:
+    if state.export_paths_initialized or not state.minfo_path.strip():
+        return
+    try:
+        bundle = resolve_model_bundle(state.minfo_path)
+    except Exception:
+        return
+    assets = {asset.name.casefold(): asset for asset in bundle.animations}
+    for item in state.animations:
+        asset = assets.get(item.name.casefold())
+        if asset is None:
+            continue
+        item.unpack_path = str(asset.unpack)
+        item.export_exists = asset.unpack.is_file()
+        if not item.source_path and asset.source is not None:
+            item.source_path = str(asset.source)
+    state.export_paths_initialized = True
+
+
 class GBFR_UL_Animations(UIList):
     def draw_item(self, _context, layout, data, item, _icon, _active_data, _active_propname, index):
         row = layout.row(align=True)
@@ -1266,6 +1322,20 @@ class GBFR_UL_Animations(UIList):
             display_name += f"  [推测：{annotation}]"
         row.label(text=display_name, icon="CHECKMARK" if active else "ACTION")
         row.label(text=f"{item.frame_count}帧")
+        if _entry_has_exported_file(item):
+            previewing_export = (
+                data.export_preview_active
+                and data.export_preview_entry_name == item.name
+            )
+            operator = row.operator(
+                "gbfr.animation_toggle_export_preview", text="",
+                icon="LOOP_BACK" if previewing_export else "FILE_MOVIE",
+            )
+            operator.animation_index = index
+            operator = row.operator(
+                "gbfr.animation_reimport_exported", text="", icon="IMPORT",
+            )
+            operator.animation_index = index
         if action is None:
             operator = row.operator("gbfr.animation_import_action", text="", icon="IMPORT")
             operator.animation_index = index
@@ -1313,6 +1383,7 @@ class GBFR_PT_AnimationPreview(Panel):
     def draw(self, context):
         armature = _armature(context)
         state = armature.gbfr_animation
+        _ensure_export_paths(state)
         layout = self.layout
         row = layout.row(align=True)
         row.prop(state, "search", text="", icon="VIEWZOOM")
@@ -1339,22 +1410,6 @@ class GBFR_PT_AnimationPreview(Panel):
                 layout.label(
                     text=f"文件名推测：{annotation}", icon="QUESTION",
                 )
-            previewing_export = (
-                state.export_preview_active
-                and state.export_preview_entry_name == item.name
-            )
-            export_tools = layout.row(align=True)
-            operator = export_tools.operator(
-                "gbfr.animation_toggle_export_preview",
-                text="返回 Action" if previewing_export else "预览导出 MOT",
-                icon="LOOP_BACK" if previewing_export else "FILE_MOVIE",
-            )
-            operator.animation_index = state.active_animation_index
-            operator = export_tools.operator(
-                "gbfr.animation_reimport_exported",
-                text="导回 Action", icon="IMPORT",
-            )
-            operator.animation_index = state.active_animation_index
             if state.preview_active or imported:
                 layout.prop(context.scene, "frame_current", text="帧")
         if imported:

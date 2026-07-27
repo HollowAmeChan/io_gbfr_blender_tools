@@ -40,7 +40,7 @@ for bone in bpy.context.object.data.edit_bones:
 
 已导出到 unpack 的动画会额外显示“预览导出 MOT”。这是上述互斥规则的显式验证模式：插件临时解除当前 Action/NLA，重新解析磁盘上的 unpack `.mot` 并直接预览实际写出结果；“返回 Action”会恢复原编辑栈。该模式不会删除或重新烘焙 Action，也不会把普通源 MOT 播放重新启用。
 
-“导回 Action”会把 unpack `.mot` 重新解析并逐帧烘焙为新的 Base Action。它用于把已经验证过的游戏文件作为下一轮编辑基线；成功后原 Base 和可选 Edit 会被新 Base 替换。操作执行前要求确认，并且只有新 Action 完成轨道检查和矩阵验证后才删除旧数据。导回后当前动画的模板路径指向 unpack 文件，source 路径仍保留用于工作区追踪。
+“导回 Action”会把 unpack `.mot` 重新解析并逐帧烘焙为新的 Base Action。它用于把已经验证过的游戏文件作为下一轮编辑基线；成功后原 Base 和可选 Edit 会被新 Base 替换。操作执行前要求确认，并且只有新 Action 完成轨道检查和矩阵验证后才删除旧数据。导回后只有 Action 模板路径指向 unpack 文件；普通列表预览始终读取 source MOT。删除全部可编辑 Action 后，不会因曾经导回过文件而继续预览 unpack。
 
 ## 已确认的 MOT 通道
 
