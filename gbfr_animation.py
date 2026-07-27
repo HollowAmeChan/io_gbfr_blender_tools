@@ -11,6 +11,34 @@ import struct
 import tempfile
 
 
+_MOT_SUFFIX_ANNOTATIONS = {
+    "030a": "闭左眼",
+    "031a": "紧张闭眼",
+    "032a": "闭右眼",
+    "034a": "闭眼",
+    "035a": "紧闭眼",
+    "036a": "舒张闭眼",
+    "e00a": "闭眼笑",
+}
+
+
+def guess_mot_annotation(name: str | Path) -> str:
+    """Return a filename-based, explicitly speculative MOT description."""
+    suffix = Path(str(name)).stem.casefold().rsplit("_", 1)[-1]
+    annotation = _MOT_SUFFIX_ANNOTATIONS.get(suffix)
+    if annotation is not None:
+        return annotation
+    if len(suffix) == 4:
+        try:
+            value = int(suffix, 16)
+        except ValueError:
+            pass
+        else:
+            if int("c50b", 16) <= value <= int("c84b", 16):
+                return "口型"
+    return ""
+
+
 @dataclass(frozen=True)
 class AnimationKey:
     frame: int

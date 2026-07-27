@@ -5,7 +5,7 @@ import unittest
 
 from gbfr_animation import (
     AnimationClip, AnimationKey, AnimationTrack, load_mot, read_mot_header,
-    serialize_mot_template, write_mot_template_atomic,
+    guess_mot_annotation, serialize_mot_template, write_mot_template_atomic,
 )
 
 
@@ -20,6 +20,25 @@ def make_constant_mot(path):
 
 
 class AnimationTests(unittest.TestCase):
+    def test_filename_annotations_are_explicitly_limited_to_known_suffixes(self):
+        expected = {
+            "fp1400_030a.mot": "闭左眼",
+            "fp1400_031a.mot": "紧张闭眼",
+            "fp1400_032a.mot": "闭右眼",
+            "fp1400_034a.mot": "闭眼",
+            "fp1400_035a.mot": "紧闭眼",
+            "fp1400_036a.mot": "舒张闭眼",
+            "fp1400_e00a.mot": "闭眼笑",
+            "fp1400_c50b.mot": "口型",
+            "fp1400_c84b.mot": "口型",
+        }
+        for name, annotation in expected.items():
+            self.assertEqual(annotation, guess_mot_annotation(name))
+        self.assertEqual("", guess_mot_annotation("fp1400_c50a.mot"))
+        self.assertEqual("", guess_mot_annotation("fp1400_c84c.mot"))
+        self.assertEqual("", guess_mot_annotation("fp1400_e001.mot"))
+        self.assertEqual("", guess_mot_annotation("fp1400_idle.mot"))
+
     def test_header_constant_track_and_sampling(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "test.mot"

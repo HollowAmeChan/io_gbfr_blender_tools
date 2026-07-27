@@ -13,7 +13,8 @@ from bpy.types import Operator, Panel, PropertyGroup, UIList
 from mathutils import Euler, Matrix, Quaternion, Vector
 
 from .gbfr_animation import (
-    AnimationClip, load_mot, read_mot_header, write_mot_template_atomic,
+    AnimationClip, guess_mot_annotation, load_mot, read_mot_header,
+    write_mot_template_atomic,
 )
 from .gbfr_session import active_session_armature
 from .gbfr_workspace import ModelBundle, resolve_model_bundle
@@ -35,6 +36,7 @@ class GBFRAnimationEntryProperties(PropertyGroup):
     unpack_path: StringProperty(name="unpack MOT", subtype="FILE_PATH")
     display_name: StringProperty(name="名称")
     internal_name: StringProperty(name="内部名称")
+    guessed_annotation: StringProperty(name="推测注释")
     frame_count: IntProperty(name="帧数")
     track_count: IntProperty(name="轨道")
     category: StringProperty(name="类别")
@@ -282,6 +284,7 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
             item.unpack_path = str(asset.unpack)
             item.display_name = asset.preview.stem
             item.internal_name = header.name
+            item.guessed_annotation = guess_mot_annotation(asset.name)
             item.frame_count = header.frame_count
             item.track_count = header.track_count
             item.category = category
@@ -1015,8 +1018,9 @@ class GBFR_UL_Animations(UIList):
         action = _entry_action(item)
         active = action is not None and data.active_action_name == action.name
         row.label(text=item.display_name, icon="CHECKMARK" if active else "ACTION")
+        if item.guessed_annotation:
+            row.label(text=f"{item.guessed_annotation}?", icon="QUESTION")
         row.label(text=f"{item.frame_count}f")
-        row.label(text=f"{item.track_count}轨")
         if action is None:
             operator = row.operator("gbfr.animation_import_action", text="", icon="IMPORT")
             operator.animation_index = index
@@ -1034,7 +1038,17 @@ class GBFR_UL_Animations(UIList):
     def filter_items(self, _context, data, property_name):
         values = getattr(data, property_name)
         query = data.search.strip().casefold()
-        flags = [self.bitflag_filter_item if not query or query in item.display_name.casefold() or query in item.internal_name.casefold() else 0 for item in values]
+        flags = [
+            self.bitflag_filter_item
+            if (
+                not query
+                or query in item.display_name.casefold()
+                or query in item.internal_name.casefold()
+                or query in item.guessed_annotation.casefold()
+            )
+            else 0
+            for item in values
+        ]
         return flags, []
 
 
@@ -1073,6 +1087,10 @@ class GBFR_PT_AnimationPreview(Panel):
             details = layout.row(align=True)
             details.label(text=item.internal_name or item.display_name, icon="ACTION")
             details.label(text=f"{item.frame_count}f · {item.track_count}轨")
+            if item.guessed_annotation:
+                layout.label(
+                    text=f"文件名推测：{item.guessed_annotation}", icon="QUESTION",
+                )
             if state.preview_active or imported:
                 layout.prop(context.scene, "frame_current", text="帧")
         if imported:

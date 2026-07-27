@@ -25,6 +25,21 @@ from io_gbfr_blender_tools.gbfr_session import active_session_armature
 armature = active_session_armature(bpy.context)
 assert armature is not None
 state = armature.gbfr_animation
+annotations = {
+    item.display_name: item.guessed_annotation for item in state.animations
+}
+assert annotations["fp1400_030a"] == "闭左眼"
+assert annotations["fp1400_031a"] == "紧张闭眼"
+assert annotations["fp1400_032a"] == "闭右眼"
+assert annotations["fp1400_034a"] == "闭眼"
+assert annotations["fp1400_035a"] == "紧闭眼"
+assert annotations["fp1400_036a"] == "舒张闭眼"
+assert annotations["fp1400_e00a"] == "闭眼笑"
+assert all(
+    annotation == "口型"
+    for name, annotation in annotations.items()
+    if "c50b" <= name.rsplit("_", 1)[-1] <= "c84b"
+)
 names = requested_names or ("fp1400_000a", "fp1400_000b")
 assert len(names) == 2
 indices = [
