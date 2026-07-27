@@ -14,6 +14,8 @@
 
 旧版 Fixes、Utilities、Materials、Advanced 和 Credits 已汇总为同一 `GBFR` N 栏标签下的顶级“GBFR 实用工具”面板。它不是工作区中控的子面板，内部按骨架、网格、材质 ID、高级和项目链接折叠；骨骼名称可在 GBFR 编号与 Unity/Blender 人形名称之间双向转换，旧的网格清理、拆分/合并、材质 ID 与 minfo Magic 操作也保留。该面板明确作用于 Blender 当前活动对象，方便处理用户自己导入的替换模型；它不会因为中控选中了某个 minfo 会话而自动改动会话对象。
 
+面部 `_8xx` 权重骨在转为 Unity/Blender 名称时统一使用 `FaceDeformXX.L`、`FaceDeformXX.R` 和无后缀的中线 `FaceDeformXX`。左右配对来自 `fp1400` 静止位置与权重质心的镜像验证，同一对共用 `XX`，可以被 Blender 的镜像名称规则直接识别。没有可靠左右依据且不参与当前网格权重的 `_8a4/_8a5/_8a7/_8a8/_8d0` 不伪造侧别。转回 GBFR 时优先读取骨骼保存的 `gbfr_original_name`/`gbfr_bone_id`，因此骨名、顶点组和 MOT Action 曲线路径可以无损恢复；旧的 Eye/Brow/Lip 等名称仍保留为反向转换兼容别名。
+
 模型导出只写入工作区中已登记的 `unpack` 二进制，不会直接写入 `build`。在 GBFR Modtools 预览、刷新并确认后，再由编辑器复制到 `build`。`flatc.exe` 不再参与模型导出；它仍可能被 Modtools 的其他格式工具使用。
 
 ## 融合骨架与稳定索引

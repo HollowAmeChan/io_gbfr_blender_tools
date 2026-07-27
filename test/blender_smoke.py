@@ -45,7 +45,8 @@ assert armature.bones.get("Hips") is not None
 assert bpy.ops.armature.translate_bones_to_gbfr() == {"FINISHED"}
 assert armature.bones.get("_000") is not None
 from io_gbfr_blender_tools.bone_name_mappings import BONE_NAME_MAPPINGS
-assert BONE_NAME_MAPPINGS["_830"][0] == "Brow_01_L"
+assert BONE_NAME_MAPPINGS["_830"][0].endswith(".L")
+assert "Brow_01_L" in BONE_NAME_MAPPINGS["_830"]
 mesh_data = bpy.data.meshes.new("GBFRSmokeMesh")
 mesh_obj = bpy.data.objects.new("GBFRSmokeMesh", mesh_data)
 bpy.context.scene.collection.objects.link(mesh_obj)

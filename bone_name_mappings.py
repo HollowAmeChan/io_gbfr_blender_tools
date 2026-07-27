@@ -131,8 +131,87 @@ BONE_NAME_MAPPINGS = {
     "_8c0": ["Tounge Base"],
     "_8c1": ["Tounge Middle"],
     "_8c2": ["Tounge Tip"],
-    "_820": ["Mouth Inside Bottom"]
+	"_820": ["Mouth Inside Bottom"]
 }
 
+# Paired IDs were verified from fp1400 rest positions and weighted-vertex
+# centroids. Positive X is the character's left side in the imported rig.
+FACE_DEFORM_GROUPS = (
+    ("_800", "_810"),
+    ("_801", "_811"),
+    ("_802", "_812"),
+    ("_803", "_813"),
+    ("_804", "_814"),
+    ("_80a", "_81a"),
+    ("_80b", "_81b"),
+    ("_820",),
+    ("_821",),
+    ("_823",),
+    ("_826", "_82b"),
+    ("_827", "_82c"),
+    ("_830", "_838"),
+    ("_831", "_839"),
+    ("_832", "_83a"),
+    ("_833", "_83b"),
+    ("_837", "_83f"),
+    ("_840", "_850"),
+    ("_841", "_851"),
+    ("_842", "_852"),
+    ("_843", "_853"),
+    ("_848", "_858"),
+    ("_849", "_859"),
+    ("_84a", "_85a"),
+    ("_84f", "_85f"),
+    ("_860", "_864"),
+    ("_861", "_865"),
+    ("_868", "_86c"),
+    ("_870",),
+    ("_871",),
+    ("_872",),
+    ("_873", "_874"),
+    ("_875", "_876"),
+    ("_880", "_88c"),
+    ("_881", "_88b"),
+    ("_882", "_88a"),
+    ("_883", "_889"),
+    ("_886",),
+    ("_890", "_89f"),
+    ("_891", "_89c"),
+    ("_892", "_89b"),
+    ("_893", "_89a"),
+    ("_894", "_899"),
+    ("_897",),
+    ("_8a0", "_8a1"),
+    ("_8a4",),
+    ("_8a5",),
+    ("_8a7",),
+    ("_8a8",),
+    ("_8b0",),
+    ("_8b1", "_8b2"),
+    ("_8b5",),
+    ("_8b6", "_8b7"),
+    ("_8c0",),
+    ("_8c1",),
+    ("_8c2",),
+    ("_8c4", "_8ca"),
+    ("_8d0",),
+)
+
+
+def _prepend_alias(bone_name, alias):
+    aliases = BONE_NAME_MAPPINGS.setdefault(bone_name, [])
+    if alias in aliases:
+        aliases.remove(alias)
+    aliases.insert(0, alias)
+
+
+for group_index, group in enumerate(FACE_DEFORM_GROUPS):
+    base = f"FaceDeform{group_index:02d}"
+    if len(group) == 1:
+        _prepend_alias(group[0], base)
+    else:
+        _prepend_alias(group[0], base + ".L")
+        _prepend_alias(group[1], base + ".R")
+
 def get_bone_names_mapping():
-    return BONE_NAME_MAPPINGS
+	return BONE_NAME_MAPPINGS
