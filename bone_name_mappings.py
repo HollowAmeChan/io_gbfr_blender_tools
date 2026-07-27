@@ -213,5 +213,72 @@ for group_index, group in enumerate(FACE_DEFORM_GROUPS):
         _prepend_alias(group[0], base + ".L")
         _prepend_alias(group[1], base + ".R")
 
+
+# Confirmed facial semantics. Generic FaceDeform aliases remain in each list
+# so old .blend files and external rigs can still convert back to GBFR IDs.
+FACE_SEMANTIC_ALIASES = {
+    "_830": "BrowInner.L",
+    "_838": "BrowInner.R",
+    "_831": "BrowMidInner.L",
+    "_839": "BrowMidInner.R",
+    "_832": "BrowMidOuter.L",
+    "_83a": "BrowMidOuter.R",
+    "_833": "BrowOuter.L",
+    "_83b": "BrowOuter.R",
+    "_837": "UpperEyelid.L",
+    "_83f": "UpperEyelid.R",
+    "_840": "EyeContour01.L",
+    "_850": "EyeContour01.R",
+    "_841": "EyeContour02.L",
+    "_851": "EyeContour02.R",
+    "_842": "EyeContour03.L",
+    "_852": "EyeContour03.R",
+    "_843": "EyeContour04.L",
+    "_853": "EyeContour04.R",
+    "_848": "EyeContour05.L",
+    "_858": "EyeContour05.R",
+    "_849": "EyeContour06.L",
+    "_859": "EyeContour06.R",
+    "_84a": "EyeContour07.L",
+    "_85a": "EyeContour07.R",
+    "_84f": "EyeContour08.L",
+    "_85f": "EyeContour08.R",
+    "_868": "Ear.L",
+    "_86c": "Ear.R",
+    "_870": "NoseBridge01",
+    "_871": "NoseBridge02",
+    "_872": "NoseBridge03",
+    "_875": "EyeSocket.L",
+    "_876": "EyeSocket.R",
+    "_880": "UpperLip01.L",
+    "_88c": "UpperLip01.R",
+    "_881": "UpperLip02.L",
+    "_88b": "UpperLip02.R",
+    "_882": "UpperLip03.L",
+    "_88a": "UpperLip03.R",
+    "_883": "UpperLip04.L",
+    "_889": "UpperLip04.R",
+    "_886": "UpperLipCenter",
+    "_890": "MouthCorner.L",
+    "_89f": "MouthCorner.R",
+    "_891": "LowerLip01.L",
+    "_89c": "LowerLip01.R",
+    "_892": "LowerLip02.L",
+    "_89b": "LowerLip02.R",
+    "_893": "LowerLip03.L",
+    "_89a": "LowerLip03.R",
+    "_894": "LowerLip04.L",
+    "_899": "LowerLip04.R",
+    "_897": "LowerLipCenter",
+    "_8a0": "EyeBall.L",
+    "_8a1": "EyeBall.R",
+    "_8b0": "UpperTeeth",
+    "_8b5": "LowerTeeth",
+    "_8c2": "TongueTip",
+}
+
+for bone_name, alias in FACE_SEMANTIC_ALIASES.items():
+    _prepend_alias(bone_name, alias)
+
 def get_bone_names_mapping():
 	return BONE_NAME_MAPPINGS
