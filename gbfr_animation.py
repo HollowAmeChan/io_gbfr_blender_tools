@@ -305,7 +305,13 @@ def write_mot_template_atomic(
     destination: str | Path,
 ) -> Path:
     """Write and reparse a template-based MOT before replacing its unpack target."""
+    if not str(destination).strip():
+        raise ValueError("MOT unpack 输出路径为空；请刷新动画列表后重试")
     destination = Path(destination).expanduser().resolve()
+    if destination.suffix.casefold() != ".mot":
+        raise ValueError(f"MOT unpack 输出目标不是 .mot 文件: {destination}")
+    if destination.is_dir():
+        raise ValueError(f"MOT unpack 输出目标是目录: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     payload = serialize_mot_template(template, sampled_tracks)
     temporary = None

@@ -97,6 +97,22 @@ class AnimationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NaN"):
             serialize_mot_template(template, ((0.0, float("nan")),))
 
+    def test_template_writer_rejects_empty_non_mot_and_directory_targets(self):
+        template = AnimationClip(
+            Path("source.mot"), 1, 0, 1, 0, "test",
+            (AnimationTrack(1, 0, 0, 0, "constant", (AnimationKey(0, 0.0),)),),
+        )
+        with self.assertRaisesRegex(ValueError, "路径为空"):
+            write_mot_template_atomic(template, ((0.0,),), "")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with self.assertRaisesRegex(ValueError, "不是 .mot"):
+                write_mot_template_atomic(template, ((0.0,),), directory / "output")
+            mot_directory = directory / "output.mot"
+            mot_directory.mkdir()
+            with self.assertRaisesRegex(ValueError, "目标是目录"):
+                write_mot_template_atomic(template, ((0.0,),), mot_directory)
+
 
 if __name__ == "__main__":
     unittest.main()

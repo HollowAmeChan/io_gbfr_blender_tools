@@ -3,6 +3,7 @@
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 
 import bpy
 
@@ -16,8 +17,8 @@ assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINI
 
 from io_gbfr_blender_tools.gbfr_animation import load_mot
 from io_gbfr_blender_tools.gbfr_animation_blender import (
-    _entry_action, _entry_annotation, _entry_edit_action, _has_imported_actions,
-    load_selected_animation,
+    _entry_action, _entry_annotation, _entry_edit_action, _entry_unpack_path,
+    _has_imported_actions, load_selected_animation,
 )
 from io_gbfr_blender_tools.gbfr_session import active_session_armature
 
@@ -59,7 +60,19 @@ assert _has_imported_actions(state)
 clip = load_mot(first.path)
 with tempfile.TemporaryDirectory(prefix="gbfr_mot_roundtrip_") as temporary:
     output = Path(temporary) / first.name
-    first.unpack_path = str(output)
+    import io_gbfr_blender_tools.gbfr_animation_blender as animation_blender
+
+    original_resolver = animation_blender.resolve_model_bundle
+    first.unpack_path = ""
+    animation_blender.resolve_model_bundle = lambda _path: SimpleNamespace(
+        animations=(SimpleNamespace(
+            name=first.name, unpack=output, source=Path(first.source_path),
+        ),),
+    )
+    try:
+        assert _entry_unpack_path(armature, first) == output.resolve()
+    finally:
+        animation_blender.resolve_model_bundle = original_resolver
     assert bpy.ops.gbfr.animation_export_action(animation_index=indices[0]) == {"FINISHED"}
     exported = load_mot(output)
     assert len(exported.tracks) == len(clip.tracks)

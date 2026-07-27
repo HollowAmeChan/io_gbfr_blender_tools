@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import math
+from pathlib import Path
 import uuid
 
 import bpy
@@ -592,6 +593,40 @@ def _entry_template_path(entry) -> str:
     return entry.path
 
 
+def _entry_unpack_path(armature, entry) -> Path:
+    cached = entry.unpack_path.strip()
+    if cached:
+        destination = Path(bpy.path.abspath(cached)).expanduser().resolve()
+        if destination.suffix.casefold() == ".mot" and not destination.is_dir():
+            return destination
+
+    state = armature.gbfr_animation
+    if not state.minfo_path.strip():
+        raise ValueError("当前动画会话没有 minfo 路径；请刷新工作区后重试")
+    bundle = resolve_model_bundle(state.minfo_path)
+    asset = next(
+        (
+            candidate for candidate in bundle.animations
+            if candidate.name.casefold() == entry.name.casefold()
+        ),
+        None,
+    )
+    if asset is None:
+        raise ValueError(
+            f"workspace 中找不到动画 {entry.name}；请刷新动画列表后重试"
+        )
+    destination = asset.unpack.expanduser().resolve()
+    if destination.suffix.casefold() != ".mot" or destination.is_dir():
+        raise ValueError(f"workspace 计算出的 MOT 输出目标无效: {destination}")
+    entry.unpack_path = str(destination)
+    if asset.source is not None:
+        entry.source_path = str(asset.source)
+    action = _entry_action(entry)
+    if action is not None:
+        action["gbfr_mot_unpack_path"] = str(destination)
+    return destination
+
+
 def _sample_bound_basis_for_clip(armature, clip: AnimationClip, scene):
     runtime = _make_runtime(armature, clip)
     result = {
@@ -726,6 +761,7 @@ class GBFR_OT_AnimationValidateAction(Operator):
         try:
             _bind_entry_action(armature, entry, context.scene)
             clip = load_mot(_entry_template_path(entry))
+            _entry_unpack_path(armature, entry)
             sampled = _sample_bound_action_for_template(armature, clip, context.scene)
             if len(sampled) != len(clip.tracks):
                 raise ValueError("Action 采样轨道数量不一致")
@@ -763,7 +799,9 @@ class GBFR_OT_AnimationExportAction(Operator):
             _bind_entry_action(armature, entry, context.scene)
             clip = load_mot(_entry_template_path(entry))
             sampled = _sample_bound_action_for_template(armature, clip, context.scene)
-            destination = write_mot_template_atomic(clip, sampled, entry.unpack_path)
+            destination = write_mot_template_atomic(
+                clip, sampled, _entry_unpack_path(armature, entry),
+            )
             entry.validation_status = "已导出"
             state.last_status = f"已独立导出 {entry.display_name} 到 {destination}"
             self.report({"INFO"}, state.last_status)
