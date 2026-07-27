@@ -270,6 +270,7 @@ class GBFRToolPanel_RestoredUtilities(bpy.types.Panel):
 				replace.replace_existing = True
 
 				panel.operator("gbfr.clp_delete_selection", text="删除所选", icon='REMOVE')
+				panel.operator("gbfr.clp_clean_invalid_references", text="检查并清理无效节点/连接", icon='BRUSH_DATA')
 				panel.operator("gbfr.clp_rebuild_connections", text="重建连接（保留节点参数）", icon='NODETREE')
 				if state.last_status:
 					panel.label(text=state.last_status, icon='INFO')

@@ -584,6 +584,79 @@ def _replace_group_nodes(group, values, bone_mapping: dict[int, str]) -> None:
     group.active_node_index = min(group.active_node_index, max(0, len(group.nodes) - 1))
 
 
+def _clean_invalid_clp_groups(armature, state, all_groups=True) -> dict[str, int]:
+    bone_mapping = {
+        bone_id: bone.name
+        for bone in armature.data.bones
+        if (bone_id := _bone_id(bone)) is not None
+    }
+    groups = list(state.clp_groups) if all_groups else [state.clp_groups[state.active_clp_index]]
+    result = {
+        "groups": len(groups),
+        "removed_nodes": 0,
+        "duplicate_nodes": 0,
+        "migrated_ids": 0,
+        "cleared_references": 0,
+    }
+
+    for group in groups:
+        candidates = []
+        seen_ids = set()
+        for source in group.nodes:
+            raw_id = int(source.bone)
+            reference = str(source.bone_ref or "")
+            referenced_bone = armature.data.bones.get(reference) if reference else None
+            if referenced_bone is None:
+                result["removed_nodes"] += 1
+                continue
+            canonical_id = _bone_id(referenced_bone)
+            if canonical_id is None:
+                canonical_id = raw_id
+            bone_mapping[canonical_id] = referenced_bone.name
+            if canonical_id in seen_ids:
+                result["duplicate_nodes"] += 1
+                continue
+            seen_ids.add(canonical_id)
+            value = _node_value(source)
+            if value.bone != canonical_id:
+                value.bone = canonical_id
+                result["migrated_ids"] += 1
+            candidates.append((source, value))
+
+        surviving_ids = {value.bone for _source, value in candidates}
+        values = []
+        for source, value in candidates:
+            for field in ("up", "down", "side", "poly"):
+                raw_id = int(getattr(value, field))
+                if raw_id == MISSING_BONE:
+                    continue
+                reference = str(getattr(source, field + "_ref", "") or "")
+                referenced_bone = armature.data.bones.get(reference) if reference else None
+                canonical_id = _bone_id(referenced_bone) if referenced_bone is not None else None
+                if canonical_id not in surviving_ids or canonical_id == value.bone:
+                    setattr(value, field, MISSING_BONE)
+                    result["cleared_references"] += 1
+                elif canonical_id != raw_id:
+                    setattr(value, field, canonical_id)
+                    result["migrated_ids"] += 1
+
+            raw_fix = int(value.fix)
+            if raw_fix != MISSING_BONE:
+                reference = str(source.fix_ref or "")
+                referenced_bone = armature.data.bones.get(reference) if reference else None
+                canonical_id = _bone_id(referenced_bone) if referenced_bone is not None else None
+                if canonical_id is None:
+                    value.fix = MISSING_BONE
+                    result["cleared_references"] += 1
+                elif canonical_id != raw_fix:
+                    value.fix = canonical_id
+                    result["migrated_ids"] += 1
+            values.append(value)
+
+        _replace_group_nodes(group, values, bone_mapping)
+    return result
+
+
 def _apply_preset_header(group, value) -> None:
     for xml_name, item in value.header.items():
         if xml_name == "gravityVec_":
@@ -706,19 +779,20 @@ def _canonicalize_cloth_bone_ids(armature, state, exported_bone_names=None):
 
     legacy_mapping = _bone_map(armature)
     raw_to_canonical: dict[int, int] = {}
-    for group in state.clp_groups:
-        for node in group.nodes:
-            raw_id = int(node.bone)
-            reference = node.bone_ref or legacy_mapping.get(raw_id, "")
-            canonical_id = by_alias.get(reference)
-            if canonical_id is None:
-                continue
-            previous = raw_to_canonical.get(raw_id)
-            if previous is not None and previous != canonical_id:
-                raise RuntimeError(
-                    f"CLP 原始骨号 _{raw_id:03x} 同时指向多个骨骼",
-                )
-            raw_to_canonical[raw_id] = canonical_id
+    if not strict_final_ids:
+        for group in state.clp_groups:
+            for node in group.nodes:
+                raw_id = int(node.bone)
+                reference = node.bone_ref or legacy_mapping.get(raw_id, "")
+                canonical_id = by_alias.get(reference)
+                if canonical_id is None:
+                    continue
+                previous = raw_to_canonical.get(raw_id)
+                if previous is not None and previous != canonical_id:
+                    raise RuntimeError(
+                        f"CLP 原始骨号 _{raw_id:03x} 同时指向多个骨骼",
+                    )
+                raw_to_canonical[raw_id] = canonical_id
 
     migrated_count = 0
     deduplicated_count = 0
@@ -727,10 +801,20 @@ def _canonicalize_cloth_bone_ids(armature, state, exported_bone_names=None):
         for index, source in enumerate(group.nodes):
             value = _node_value(source)
             original_bone = int(value.bone)
-            reference = source.bone_ref or legacy_mapping.get(original_bone, "")
-            value.bone = by_alias.get(
-                reference, raw_to_canonical.get(original_bone, original_bone),
-            )
+            if strict_final_ids:
+                reference = str(source.bone_ref or "")
+                referenced_bone = armature.data.bones.get(reference) if reference else None
+                canonical_id = by_name.get(referenced_bone.name) if referenced_bone is not None else None
+                if canonical_id is None:
+                    raise ValueError(
+                        f"{group.name} 节点 _{original_bone:03x} 没有可导出的真实骨骼对象",
+                    )
+                value.bone = canonical_id
+            else:
+                reference = source.bone_ref or legacy_mapping.get(original_bone, "")
+                value.bone = by_alias.get(
+                    reference, raw_to_canonical.get(original_bone, original_bone),
+                )
             if value.bone != original_bone:
                 migrated_count += 1
             for field in ("up", "down", "side", "poly", "fix"):
@@ -738,9 +822,18 @@ def _canonicalize_cloth_bone_ids(armature, state, exported_bone_names=None):
                 if original_id == MISSING_BONE:
                     continue
                 field_ref = getattr(source, field + "_ref", "")
-                canonical_id = by_alias.get(
-                    field_ref, raw_to_canonical.get(original_id, original_id),
-                )
+                if strict_final_ids:
+                    referenced_bone = armature.data.bones.get(field_ref) if field_ref else None
+                    canonical_id = by_name.get(referenced_bone.name) if referenced_bone is not None else None
+                    if canonical_id is None:
+                        raise ValueError(
+                            f"{group.name} 节点 {source.bone_ref or f'_{original_bone:03x}'}.{field} "
+                            f"没有可导出的真实骨骼对象（原始 _{original_id:03x}）",
+                        )
+                else:
+                    canonical_id = by_alias.get(
+                        field_ref, raw_to_canonical.get(original_id, original_id),
+                    )
                 if canonical_id != original_id:
                     setattr(value, field, canonical_id)
                     migrated_count += 1
@@ -753,7 +846,7 @@ def _canonicalize_cloth_bone_ids(armature, state, exported_bone_names=None):
                     reference = getattr(source, field + "_ref", "")
                     if not reference:
                         reference = legacy_mapping.get(original_id, "")
-                    if reference and field_id not in final_ids:
+                    if field_id not in final_ids:
                         identity = source.bone_ref or f"_{int(source.bone):03x}"
                         raise ValueError(
                             f"{group.name} 节点 {identity}.{field} 无法映射到本次导出骨架"
@@ -779,10 +872,19 @@ def _canonicalize_cloth_bone_ids(armature, state, exported_bone_names=None):
                 for field in ("p1", "p2"):
                     original_id = int(getattr(collision, field))
                     reference = getattr(collision, field + "_ref", "")
-                    canonical_id = by_alias.get(
-                        reference, raw_to_canonical.get(original_id, original_id),
-                    )
-                    if strict_final_ids and reference and canonical_id not in final_ids:
+                    if strict_final_ids:
+                        referenced_bone = armature.data.bones.get(reference) if reference else None
+                        canonical_id = by_name.get(referenced_bone.name) if referenced_bone is not None else None
+                        if canonical_id is None:
+                            raise ValueError(
+                                f"{layer.name} 碰撞 #{collision.collision_id}.{field} "
+                                f"没有可导出的真实骨骼对象（原始 _{original_id:03x}）",
+                            )
+                    else:
+                        canonical_id = by_alias.get(
+                            reference, raw_to_canonical.get(original_id, original_id),
+                        )
+                    if strict_final_ids and canonical_id not in final_ids:
                         raise ValueError(
                             f"{layer.name} 碰撞 #{collision.collision_id}.{field} "
                             f"无法映射到本次导出骨架"
@@ -1077,6 +1179,94 @@ class GBFR_OT_ClpDeleteSelection(Operator):
             return {"CANCELLED"}
 
 
+class GBFR_OT_ClpRemoveActiveNode(Operator):
+    bl_idname = "gbfr.clp_remove_active_node"
+    bl_label = "删除当前 CLP 行"
+    bl_description = "只删除节点列表中当前高亮行，并清除其他节点指向它的引用"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        if not state or not state.enabled or not state.clp_groups:
+            return {"CANCELLED"}
+        group = state.clp_groups[state.active_clp_index]
+        if not group.nodes:
+            return {"CANCELLED"}
+
+        index = min(max(0, group.active_node_index), len(group.nodes) - 1)
+        removed_id = int(group.nodes[index].bone)
+        removed_name = str(group.nodes[index].bone_ref or f"_{removed_id:03x}")
+        group.nodes.remove(index)
+        surviving_ids = {int(node.bone) for node in group.nodes}
+        cleared_count = 0
+        if removed_id not in surviving_ids:
+            for node in group.nodes:
+                node.suspend_reference_updates = True
+                try:
+                    for field in ("up", "down", "side", "poly", "fix"):
+                        if int(getattr(node, field)) == removed_id:
+                            setattr(node, field, MISSING_BONE)
+                            setattr(node, field + "_ref", "")
+                            cleared_count += 1
+                finally:
+                    node.suspend_reference_updates = False
+        group.active_node_index = min(index, max(0, len(group.nodes) - 1))
+        state.last_status = (
+            f"已从 CLP {group.group_id} 精确删除 {removed_name}，"
+            f"清除 {cleared_count} 个引用；尚未写入 XML"
+        )
+        self.report({"INFO"}, state.last_status)
+        _tag_redraw()
+        return {"FINISHED"}
+
+
+class GBFR_OT_ClpCleanInvalidReferences(Operator):
+    bl_idname = "gbfr.clp_clean_invalid_references"
+    bl_label = "检查并清理无效 CLP"
+    bl_description = "删除骨骼已不存在的节点，并清除指向不存在节点的拓扑引用"
+    bl_options = {"REGISTER", "UNDO"}
+
+    all_groups: BoolProperty(
+        name="检查全部 CLP",
+        default=True,
+        description="开启时清理全部 CLP；关闭时只清理当前组",
+    )
+
+    def invoke(self, context, _event):
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        if not state or not state.enabled or not state.clp_groups:
+            return {"CANCELLED"}
+        return context.window_manager.invoke_props_dialog(self, width=440)
+
+    def draw(self, _context):
+        layout = self.layout
+        layout.prop(self, "all_groups")
+        layout.label(text="将删除节点骨骼已不存在的记录。", icon="ERROR")
+        layout.label(text="其余节点的悬空连接会重置为无（4095）。", icon="INFO")
+
+    def execute(self, context):
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        if not state or not state.enabled or not state.clp_groups:
+            return {"CANCELLED"}
+        try:
+            result = _clean_invalid_clp_groups(armature, state, self.all_groups)
+            state.last_status = (
+                f"已检查 {result['groups']} 个 CLP：删除 {result['removed_nodes']} 个无效节点、"
+                f"{result['duplicate_nodes']} 个重复节点，清除 {result['cleared_references']} 个悬空引用，"
+                f"迁移 {result['migrated_ids']} 个旧 ID；尚未写入 XML"
+            )
+            self.report({"INFO"}, state.last_status)
+            _tag_redraw()
+            return {"FINISHED"}
+        except Exception as error:
+            state.last_status = str(error)
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+
+
 class GBFR_OT_ClpRebuildConnections(Operator):
     bl_idname = "gbfr.clp_rebuild_connections"
     bl_label = "重建当前 CLP 连接"
@@ -1353,7 +1543,12 @@ def _draw_clp_group_editor(layout, armature, state, group):
 
 
 def _draw_clp_node_editor(layout, armature, state, group):
-    layout.template_list("GBFR_UL_ClpNodes", "", group, "nodes", group, "active_node_index", rows=6)
+    list_row = layout.row()
+    list_row.template_list("GBFR_UL_ClpNodes", "", group, "nodes", group, "active_node_index", rows=6)
+    tools = list_row.column(align=True)
+    remove = tools.row(align=True)
+    remove.enabled = bool(group.nodes)
+    remove.operator("gbfr.clp_remove_active_node", text="", icon="REMOVE")
     if not group.nodes:
         return
     node = group.nodes[group.active_node_index]
@@ -1656,7 +1851,9 @@ classes = (
     GBFRClpNodeProperties, GBFRClpGroupProperties, GBFRClhCollisionProperties,
     GBFRClhLayerProperties, GBFRClothStateProperties, GBFR_OT_ClothReload,
     GBFR_OT_ClpCreateFromSelection,
-    GBFR_OT_ClpDeleteSelection, GBFR_OT_ClpRebuildConnections,
+    GBFR_OT_ClpDeleteSelection, GBFR_OT_ClpRemoveActiveNode,
+    GBFR_OT_ClpCleanInvalidReferences,
+    GBFR_OT_ClpRebuildConnections,
     GBFR_OT_SelectBoneReference,
     GBFR_OT_ToggleCollisionLayer, GBFR_OT_ClhAddCollision, GBFR_OT_ClhRemoveCollision,
     GBFR_UL_ClpGroups, GBFR_UL_ClpNodes, GBFR_UL_ClhLayers,

@@ -254,6 +254,43 @@ assert "拓扑尾端" in state.last_status
 assert by_bone[a1].down == 4095
 assert by_bone[b2].side == 4095 and by_bone[b2].poly == 4095
 
+# Invalid legacy nodes can be invisible in the overlay because their bones no
+# longer exist. The cleanup must remove them and all topology links to them.
+invalid_id = 0xEED
+invalid = group.nodes.add()
+invalid.bone = invalid_id
+invalid.bone_ref = ""
+invalid.up = a1
+invalid.up_ref = grid_names[0]
+by_bone = {node.bone: node for node in group.nodes}
+for node, fields in (
+    (by_bone[a1], ("down",)),
+    (by_bone[b2], ("side", "poly")),
+):
+    node.suspend_reference_updates = True
+    for field in fields:
+        setattr(node, field, invalid_id)
+        setattr(node, field + "_ref", "")
+    node.suspend_reference_updates = False
+assert bpy.ops.gbfr.clp_clean_invalid_references(all_groups=False) == {"FINISHED"}
+by_bone = {node.bone: node for node in group.nodes}
+assert invalid_id not in by_bone
+assert by_bone[a1].down == 4095
+assert by_bone[b2].side == 4095 and by_bone[b2].poly == 4095
+assert "删除 1 个无效节点" in state.last_status
+assert "清除 3 个悬空引用" in state.last_status
+
+# The list row delete is deliberately exact: no selected-bone expansion and no
+# automatic topology rebuild. Only references to that one row are cleared.
+by_bone = {node.bone: node for node in group.nodes}
+by_bone[a1].side = b2
+by_bone[a1].side_ref = grid_names[3]
+group.active_node_index = next(index for index, node in enumerate(group.nodes) if node.bone == b2)
+assert bpy.ops.gbfr.clp_remove_active_node() == {"FINISHED"}
+by_bone = {node.bone: node for node in group.nodes}
+assert b2 not in by_bone and by_bone[a1].side == 4095
+assert "精确删除" in state.last_status
+
 for bone in armature.data.bones:
     bone.select = bone.name in fork_names
 try:
