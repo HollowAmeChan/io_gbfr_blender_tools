@@ -197,21 +197,21 @@ def _validate_skeleton_contract(root, reference_path, preserve_reference_skeleto
         )
 
 
-def _draw_clp_encoded_name_warnings(layout, armature):
+def _draw_clp_numeric_name_warnings(layout, armature):
     if armature is None:
         return {}
-    from .gbfr_cloth_blender import clp_encoded_name_reference_groups
-    warnings = clp_encoded_name_reference_groups(armature)
+    from .gbfr_cloth_blender import clp_numeric_name_reference_groups
+    warnings = clp_numeric_name_reference_groups(armature)
     if not warnings:
         return warnings
 
     warning = layout.box()
     warning.alert = True
     warning.label(
-        text=f"CLP 引用了 {len(warnings)} 根当前仍名为 _xxx 的骨骼",
+        text=f"CLP 引用了 {len(warnings)} 根纯数字区骨骼（_000-_999）",
         icon="ERROR",
     )
-    warning.label(text="请确认其中没有 Root、身体或其他动画主骨")
+    warning.label(text="纯数字区通常包含 Root、身体或其他动画主骨，请逐项确认")
     names_by_group = {}
     for name, group_ids in warnings.items():
         for group_id in group_ids:
@@ -272,7 +272,7 @@ class ExportSomeData(Operator, ImportHelper):
             return
         state = collection.gbfr_session
         box.label(text=f"当前模型: {state.model_id}", icon="FILE_3D")
-        _draw_clp_encoded_name_warnings(layout, active_session_armature(context))
+        _draw_clp_numeric_name_warnings(layout, active_session_armature(context))
         try:
             targets = resolve_model_export_targets(self.filepath, state.model_id)
         except Exception as error:

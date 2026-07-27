@@ -1,6 +1,7 @@
 """Run with: blender --background --python this_file.py -- path/to/source/model.minfo"""
 
 from pathlib import Path
+import re
 import sys
 
 import bpy
@@ -19,12 +20,12 @@ from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
 from io_gbfr_blender_tools.gbfr_bone_selection import selected_bone_names
 from io_gbfr_blender_tools.gbfr_cloth_blender import (
     _canonicalize_cloth_bone_ids, _export_bone_ids, _header_attr,
-    clp_encoded_name_reference_groups,
+    clp_numeric_name_reference_groups,
 )
 from io_gbfr_blender_tools.gbfr_cloth_format import (
     CLP_HEADER_FLOATS, CLP_HEADER_INTS, ClpNode, MISSING_BONE,
 )
-from io_gbfr_blender_tools.gbfr_export import _draw_clp_encoded_name_warnings
+from io_gbfr_blender_tools.gbfr_export import _draw_clp_numeric_name_warnings
 from io_gbfr_blender_tools.gbfr_model_export_v2 import (
     appended_bone_export_name_map,
     rename_new_bones_for_experimental_export,
@@ -41,15 +42,23 @@ assert "apply_header" not in create_rna.properties
 targets = resolve_model_export_targets(state.workspace_path, state.model_id)
 source_skeleton = ModelSkeleton.GetRootAs(bytearray(targets.reference_skeleton.read_bytes()), 0)
 
-encoded_references = clp_encoded_name_reference_groups(armature)
-assert "_900" not in encoded_references
+numeric_references = clp_numeric_name_reference_groups(armature)
+assert numeric_references == {}
 probe_group = next(group for group in state.clp_groups if group.group_id == 3 and group.nodes)
 probe_node = probe_group.nodes[0]
 old_fix, old_fix_ref = int(probe_node.fix), str(probe_node.fix_ref)
+non_numeric_zone_bone = next(
+    bone for bone in armature.data.bones
+    if re.fullmatch(r"_[acd][0-9a-fA-F]{2}", bone.name)
+)
 probe_node.suspend_reference_updates = True
-probe_node.fix, probe_node.fix_ref = 0x900, "_900"
+probe_node.fix, probe_node.fix_ref = 0x900, non_numeric_zone_bone.name
 probe_node.suspend_reference_updates = False
-assert clp_encoded_name_reference_groups(armature)["_900"] == (3,)
+assert clp_numeric_name_reference_groups(armature) == {}
+probe_node.suspend_reference_updates = True
+probe_node.fix_ref = "_900"
+probe_node.suspend_reference_updates = False
+assert clp_numeric_name_reference_groups(armature)["_900"] == (3,)
 
 class LayoutProbe:
     def __init__(self):
@@ -67,7 +76,7 @@ class LayoutProbe:
 
 
 layout_probe = LayoutProbe()
-drawn_warnings = _draw_clp_encoded_name_warnings(layout_probe, armature)
+drawn_warnings = _draw_clp_numeric_name_warnings(layout_probe, armature)
 assert drawn_warnings["_900"] == (3,)
 assert layout_probe.children and layout_probe.children[0].alert is True
 assert any("_900" in text for text, _icon in layout_probe.children[0].labels)
