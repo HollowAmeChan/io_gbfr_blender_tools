@@ -320,7 +320,7 @@ assert by_bone[fa4].up == f3 and by_bone[fa4].down == fa5
 assert by_bone[f3].down != fa4
 assert by_bone[fb4].down == fb5 and by_bone[fb5].down == fb6
 assert all(node.side == 4095 and node.poly == 4095 for node in group.nodes)
-assert "实验分叉边 1" in state.last_status
+assert "分叉边 1" in state.last_status
 
 rename_records = dict(rename_new_bones_for_experimental_export(armature, mesh_objects, source_skeleton))
 assert rename_records == expected_names
