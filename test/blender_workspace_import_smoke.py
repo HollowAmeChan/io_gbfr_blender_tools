@@ -132,6 +132,12 @@ for mesh in meshes:
 from io_gbfr_blender_tools import gbfr_cloth_blender
 state.show_topology = False
 armatures[0].data.bones.active = armatures[0].data.bones[bone_by_id[active_bone_id]]
+state.show_collisions = False
+state.show_node_radius = True
+batches = []
+gbfr_cloth_blender._draw_armature(armatures[0], batches)
+assert sum(len(lines) for lines, _color, _width in batches) > 0
+state.show_collisions = True
 for mode in ("ACTIVE_COLLISION", "ACTIVE_BONE"):
     state.collision_layer_mode = mode
     batches = []

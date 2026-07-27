@@ -288,6 +288,7 @@ class GBFRClothStateProperties(PropertyGroup):
     active_clp_index: IntProperty(default=0, update=_tag_redraw)
     active_clh_index: IntProperty(default=0, update=_tag_redraw)
     show_topology: BoolProperty(name="CLP 骨骼链", default=True, update=_tag_redraw)
+    show_node_radius: BoolProperty(name="动骨碰撞", default=True, update=_tag_redraw)
     show_collisions: BoolProperty(name="CLH 碰撞", default=True, update=_tag_redraw)
     show_points: BoolProperty(name="端点", default=True, update=_tag_redraw)
     preview_all_clp: BoolProperty(name="显示全部 CLP", default=False, update=_tag_redraw)
@@ -1519,6 +1520,8 @@ class GBFR_PT_ClothEditor(Panel):
         layout.label(text="视口显示")
         row = layout.row(align=True)
         row.prop(state, "show_topology", text="骨骼链", toggle=True, icon="CONSTRAINT_BONE")
+        row.prop(state, "show_node_radius", text="动骨碰撞", toggle=True, icon="MESH_UVSPHERE")
+        row = layout.row(align=True)
         row.prop(state, "show_collisions", text="碰撞体", toggle=True, icon="MESH_UVSPHERE")
         row.prop(state, "show_points", text="端点", toggle=True, icon="PIVOT_CURSOR")
         view = layout.row(align=True)
@@ -1814,6 +1817,12 @@ def _draw_armature(armature, batches):
                 if state.show_points:
                     _append_cross(points, origin, 0.006)
         batches.extend(((longitudinal, (0.25, 0.95, 0.45, 0.95), 2.0), (lateral, (0.95, 0.35, 0.85, 0.95), 2.0), (fixed, (1.0, 0.55, 0.15, 0.95), 2.4), (points, (1.0, 0.9, 0.25, 0.95), 1.2)))
+    if state.show_node_radius:
+        node_radius = []
+        for group in groups:
+            for node in group.nodes:
+                _append_sphere(node_radius, _bone_point(armature, mapping, node.bone), node.thickness)
+        batches.append((node_radius, (0.65, 0.28, 1.0, 0.82), 1.2))
     if state.show_collisions:
         collision_lines, points = [], []
         active_bone = armature.data.bones.active
