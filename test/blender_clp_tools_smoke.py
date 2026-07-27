@@ -134,19 +134,42 @@ for bone in armature.data.bones:
     bone.select = bone.name in grid_names
 mesh_objects = [value for value in armature.children_recursive if value.type == "MESH"]
 all_names = grid_names + terminal_names + fork_names
+legacy_face_collision = armature.data.bones[grid_names[0]]
+legacy_face_collision["gbfr_bone_id"] = 0x830
+legacy_numeric_id = armature.data.bones[grid_names[1]]
+legacy_numeric_id["gbfr_bone_id"] = 0x730
+legacy_names = appended_bone_export_name_map(
+    armature, mesh_objects, source_skeleton, reallocate_legacy_ids=True,
+)
+assert legacy_names[grid_names[0]] != "_830"
+assert legacy_names[grid_names[0]].startswith("_c")
+assert legacy_names[grid_names[1]] != "_730"
+assert legacy_names[grid_names[1]].startswith("_c")
+legacy_face_collision["gbfr_bone_id"] = -1
+legacy_numeric_id["gbfr_bone_id"] = -1
 unreserved_names = appended_bone_export_name_map(armature, mesh_objects, source_skeleton)
 reserved_name = unreserved_names[grid_names[0]]
 reserved_id = int(reserved_name[1:], 16)
 other_group = next(group for group in state.clp_groups if group.group_id != 2 and group.nodes)
 other_node = other_group.nodes[0]
+other_node.suspend_reference_updates = True
 other_node.fix = reserved_id
-other_node.fix_ref = grid_names[0]
+other_node.fix_ref = ""
+other_node.suspend_reference_updates = False
 other_layer = next(layer for layer in state.clh_layers if layer.collisions)
 other_collision = other_layer.collisions[0]
+other_collision.suspend_reference_updates = True
 other_collision.p1 = reserved_id
-other_collision.p1_ref = grid_names[0]
+other_collision.p1_ref = ""
+other_collision.suspend_reference_updates = False
 export_ids = _export_bone_ids(armature, state, persist_appended=True)
 assert reserved_id not in export_ids.values()
+other_node.suspend_reference_updates = True
+other_node.fix_ref = grid_names[0]
+other_node.suspend_reference_updates = False
+other_collision.suspend_reference_updates = True
+other_collision.p1_ref = grid_names[0]
+other_collision.suspend_reference_updates = False
 expected_names = appended_bone_export_name_map(armature, mesh_objects, source_skeleton)
 assert set(all_names) <= set(expected_names)
 for name in all_names:

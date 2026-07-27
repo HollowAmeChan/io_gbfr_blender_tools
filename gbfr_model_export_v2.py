@@ -20,7 +20,14 @@ from .Entities.Bone import Bone, BoneStart, BoneAddA1, BoneAddParentId, BoneAddN
 from .Entities.BoneInfo import BoneInfo, CreateBoneInfo
 from .Entities.Vec3 import Vec3, CreateVec3
 from .Entities.Quaternion import Quaternion, CreateQuaternion
+from .bone_name_mappings import FACE_DEFORM_GROUPS
 from .utils import *
+
+
+KNOWN_FP_FACE_BONE_NAMES = frozenset(
+	name for group in FACE_DEFORM_GROUPS for name in group
+)
+APPENDED_BONE_POLICY_VERSION = 2
 
 # WRITE DATA TO MMESH FILE
 def write_mesh_buffer(mmesh_file, mesh_data_table, mesh_buffers_table):
@@ -163,13 +170,17 @@ def _allocate_appended_bone_names(reference_names, occupied_names, count):
 	"""Allocate names from the experimentally approved GBFR namespaces."""
 	if count == 0:
 		return []
+	# PL and FP skeletons are merged by encoded bone name at runtime. Reserve
+	# known FP deform IDs even when the PL model is exported on its own.
+	occupied_names.update(KNOWN_FP_FACE_BONE_NAMES)
 	# `_xxx` is deliberately numeric-only here (for example `_016`); the
 	# letter-prefixed namespaces have their own priority and must not overlap.
+	# Numeric-only names are last because they overlap humanoid and facial IDs.
 	candidates = [
-		*(f"_{value:03d}" for value in range(1000)),
 		*(f"_c{value:02x}" for value in range(0x100)),
 		*(f"_a{value:02x}" for value in range(0x100)),
 		*(f"_d{value:02x}" for value in range(0x100)),
+		*(f"_{value:03d}" for value in range(1000)),
 	]
 	allocated = []
 	for candidate in candidates:
@@ -184,7 +195,10 @@ def _allocate_appended_bone_names(reference_names, occupied_names, count):
 	)
 
 
-def appended_bone_export_name_map(armature_obj, mesh_objects, reference_skeleton, reserved_names=()):
+def appended_bone_export_name_map(
+	armature_obj, mesh_objects, reference_skeleton, reserved_names=(),
+	reallocate_legacy_ids=False,
+):
 	"""Return the exact temporary export names assigned to appended bones."""
 	if reference_skeleton is None:
 		raise RuntimeError("实验性新增骨骼改名需要 reference skeleton。")
@@ -218,7 +232,20 @@ def appended_bone_export_name_map(armature_obj, mesh_objects, reference_skeleton
 	for bone in extra_bones:
 		export_name = export_bone_name(bone)
 		bone_id = _encoded_bone_id(export_name)
-		if bone_id is None:
+		policy_version = int(bone.get("gbfr_auto_bone_policy", 0))
+		legacy_automatic_id = (
+			reallocate_legacy_ids
+			and _encoded_bone_id(bone.name) is None
+			and policy_version < APPENDED_BONE_POLICY_VERSION
+		)
+		if (
+			bone_id is None
+			or export_name in KNOWN_FP_FACE_BONE_NAMES
+			or legacy_automatic_id
+		):
+			# A prior cloth normalization may have persisted only the temporary
+			# export ID as metadata. Reallocate it once under the current policy
+			# without renaming the source bone.
 			unassigned.append(bone)
 			continue
 		if export_name in reference_names:

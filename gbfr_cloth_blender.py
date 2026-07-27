@@ -25,7 +25,11 @@ from .gbfr_cloth_format import (
 from .gbfr_cloth_tools import (
     PRESETS, SelectedBone, count_nonreciprocal_up_links, generate_nodes, preset, rebuild_nodes,
 )
-from .gbfr_model_export_v2 import appended_bone_export_name_map, export_bone_name
+from .gbfr_model_export_v2 import (
+    APPENDED_BONE_POLICY_VERSION,
+    appended_bone_export_name_map,
+    export_bone_name,
+)
 from .Entities.ModelSkeleton import ModelSkeleton
 from .gbfr_workspace import ModelBundle, resolve_model_bundle, resolve_model_export_targets
 from .gbfr_cloth_metadata import CLP_HEADER_GROUPS, CLP_HEADER_UI
@@ -547,12 +551,14 @@ def _export_bone_ids(armature, state, reserved_names=None, persist_appended=Fals
         reserved_names = _cloth_reserved_bone_names(state.clp_groups, state.clh_layers)
     appended = appended_bone_export_name_map(
         armature, mesh_objects, reference, reserved_names=reserved_names,
+        reallocate_legacy_ids=persist_appended,
     )
     if persist_appended:
         for bone_name, final_name in appended.items():
             bone = armature.data.bones.get(bone_name)
             if bone is not None:
                 bone["gbfr_bone_id"] = int(final_name[1:], 16)
+                bone["gbfr_auto_bone_policy"] = APPENDED_BONE_POLICY_VERSION
     result: dict[str, int] = {}
     used: dict[int, str] = {}
     for bone in armature.data.bones:
@@ -788,6 +794,8 @@ def _canonicalize_cloth_bone_ids(armature, state, exported_bone_names=None):
                 bone["gbfr_original_name"] = bone.name
                 bone["original_name"] = bone.name
                 pinned_count += 1
+            if bone.get("gbfr_original_index") is None:
+                bone["gbfr_auto_bone_policy"] = APPENDED_BONE_POLICY_VERSION
     strict_final_ids = exported_bone_names is not None
     final_ids = set(by_name.values())
     by_alias: dict[str, int] = {}

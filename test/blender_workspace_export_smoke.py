@@ -24,6 +24,7 @@ from io_gbfr_blender_tools.Entities.MInfo_ModelInfo.VertexBufferType import Vert
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
 from io_gbfr_blender_tools.gbfr_cloth_format import load_clp
 from io_gbfr_blender_tools.gbfr_model_export_v2 import (
+    KNOWN_FP_FACE_BONE_NAMES,
     export_bone_name,
     _allocate_appended_bone_names,
     quantize_vertex_weights,
@@ -31,10 +32,21 @@ from io_gbfr_blender_tools.gbfr_model_export_v2 import (
 from io_gbfr_blender_tools.gbfr_session import activate_session, session_collections
 from io_gbfr_blender_tools.gbfr_workspace import resolve_model_bundle
 
+assert _allocate_appended_bone_names(set(), set(), 2) == ["_c00", "_c01"]
 occupied_append_names = {f"_{index:03d}" for index in range(1000)}
 assert _allocate_appended_bone_names(
     {"_a79"}, occupied_append_names, 2
 ) == ["_c00", "_c01"]
+letter_names = {
+    *(f"_c{value:02x}" for value in range(0x100)),
+    *(f"_a{value:02x}" for value in range(0x100)),
+    *(f"_d{value:02x}" for value in range(0x100)),
+}
+numeric_before_face = {f"_{value:03d}" for value in range(830)}
+assert _allocate_appended_bone_names(
+    set(), letter_names | numeric_before_face, 1,
+) == ["_834"]
+assert {"_830", "_880", "_890"} <= KNOWN_FP_FACE_BONE_NAMES
 assert quantize_vertex_weights([1.0]) == (65535,)
 assert quantize_vertex_weights([0.5, 0.3, 0.2]) == (32768, 19660, 13107)
 assert quantize_vertex_weights([2.0, 1.0]) == (43690, 21845)
@@ -210,7 +222,8 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
         assert exported_bone.Name() == source_bone.Name(), index
         assert exported_bone.ParentId() == source_bone.ParentId(), index
     appended_name = exported_skeleton.Body(original_bone_count).Name().decode("utf-8")
-    assert appended_name == "_016"
+    assert len(appended_name) == 4 and appended_name[1] in "cad"
+    assert appended_name not in KNOWN_FP_FACE_BONE_NAMES
     assert exported_skeleton.Body(original_bone_count).ParentId() == 6
     assert session_root.data.bones.get(extra_bone_name) is not None
     assert weighted_mesh.vertex_groups.get(extra_bone_name) is not None

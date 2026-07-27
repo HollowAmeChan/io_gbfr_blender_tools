@@ -247,7 +247,7 @@ class ExportSomeData(Operator, ImportHelper):
     )
     experimental_rename_new_bones: BoolProperty(
         name="实验：新增骨骼使用白名单编号",
-        description="仅在临时导出副本中，将新增骨骼和对应顶点组按纯数字 _xxx、_cxx、_axx、_dxx 的优先级改名；不改变父子关系和原骨骼顺序",
+        description="仅在临时导出副本中，将新增骨骼和对应顶点组按 _cxx、_axx、_dxx、纯数字 _xxx 的优先级改名；source 原骨与已知 FP 面骨号保持不变",
         default=True,
     )
 
@@ -292,7 +292,7 @@ class ExportSomeData(Operator, ImportHelper):
             else:
                 box.label(text="源骨骼索引保持不变；融合新增骨骼统一追加到末尾", icon="LOCKED")
         if self.experimental_rename_new_bones:
-            box.label(text="实验模式：白名单优先 _xxx → _cxx → _axx → _dxx，只改名不改父子关系", icon="INFO")
+            box.label(text="实验模式：优先 _cxx → _axx → _dxx → 数字区；保留 source 原骨和 FP 面骨号", icon="INFO")
         if self.fill_missing_lods:
             box.label(text="缺失的低精度 LOD 将在导出时使用 LOD0", icon="DUPLICATE")
         cloth_state = getattr(active_session_armature(context), "gbfr_cloth", None)
