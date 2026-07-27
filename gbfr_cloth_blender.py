@@ -235,7 +235,10 @@ class GBFRClpGroupProperties(PropertyGroup):
     group_id: IntProperty(name="组 ID", default=-1)
     nodes: CollectionProperty(type=GBFRClpNodeProperties)
     active_node_index: IntProperty(default=0, update=_tag_redraw)
-    gravity_vector: FloatVectorProperty(name="重力向量", size=4, default=(0.0, -0.001, 0.0, 1.0), description="该求解组使用的游戏原始 vec4 重力向量")
+    gravity_vector: FloatVectorProperty(
+        name="重力向量", size=4, default=(0.0, -0.001, 0.0, 1.0),
+        description="该求解组使用的游戏原始 vec4 重力向量；现有制作经验中 Y 常见 -0.001 至 -0.003",
+    )
     show_advanced_header: BoolProperty(name="显示高级与原始字段", default=False)
 
 
@@ -311,7 +314,7 @@ class GBFRClothStateProperties(PropertyGroup):
     clp_node_section: EnumProperty(name="节点属性", default="TOPOLOGY", items=CLP_NODE_SECTION_ITEMS)
     clh_collision_section: EnumProperty(name="碰撞属性", default="SHAPE", items=CLH_COLLISION_SECTION_ITEMS)
     clp_tool_preset: EnumProperty(
-        name="物理预设", default="SKIRT", items=CLP_TOOL_PRESET_ITEMS,
+        name="节点参数预设", default="SKIRT", items=CLP_TOOL_PRESET_ITEMS,
         update=_clp_tool_preset_update,
     )
     clp_tool_topology: EnumProperty(
@@ -680,16 +683,6 @@ def _clean_invalid_clp_groups(armature, state, all_groups=True) -> dict[str, int
     return result
 
 
-def _apply_preset_header(group, value) -> None:
-    for xml_name, item in value.header.items():
-        if xml_name == "gravityVec_":
-            group.gravity_vector = item
-            continue
-        attr = _header_attr(xml_name)
-        if hasattr(group, attr):
-            setattr(group, attr, item)
-
-
 def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> None:
     state = armature.gbfr_cloth
     state.enabled = False
@@ -1018,12 +1011,12 @@ class GBFR_OT_ClothReload(Operator):
 class GBFR_OT_ClpCreateFromSelection(Operator):
     bl_idname = "gbfr.clp_create_from_selection"
     bl_label = "从所选骨链创建 CLP"
-    bl_description = "按真实父子层级、root 名顺序和物理预设立即创建可编辑节点"
+    bl_description = "按真实父子层级、root 名顺序和节点预设立即创建可编辑节点与连接"
     bl_options = {"REGISTER", "UNDO"}
 
     replace_existing: BoolProperty(default=False, options={"SKIP_SAVE"})
     preset_key: EnumProperty(
-        name="物理预设", default="SKIRT", items=CLP_TOOL_PRESET_ITEMS,
+        name="节点参数预设", default="SKIRT", items=CLP_TOOL_PRESET_ITEMS,
         update=_clp_create_preset_update,
     )
     topology: EnumProperty(
@@ -1034,11 +1027,6 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         ),
     )
     closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
-    apply_header: BoolProperty(
-        name="覆盖物理参数",
-        default=False,
-        description="关闭时保留当前 CLP 的 CLOTH_HEADER；开启时用所选物理预设覆盖。新建节点参数始终来自所选预设",
-    )
     selected_bones_json: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
@@ -1055,7 +1043,6 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         self.preset_key = state.clp_tool_preset
         self.topology = state.clp_tool_topology
         self.closed = state.clp_tool_closed
-        self.apply_header = False
         return context.window_manager.invoke_props_dialog(self, width=420)
 
     def draw(self, context):
@@ -1071,7 +1058,6 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         layout.prop(self, "topology", expand=True)
         if self.topology == "GRID":
             layout.prop(self, "closed", toggle=True, icon='LOOP_FORWARDS')
-        layout.prop(self, "apply_header", toggle=True, icon='PRESET')
 
     def execute(self, context):
         armature = _armature(context)
@@ -1089,7 +1075,7 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             )
             snapshot = json.loads(self.selected_bones_json) if self.selected_bones_json else None
             selected = _selected_bones(context, armature, by_name, selected_names=snapshot)
-            generated, selected_preset, chains = generate_nodes(
+            generated, chains = generate_nodes(
                 selected,
                 self.preset_key,
                 self.topology,
@@ -1120,8 +1106,6 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
                         setattr(value, field, MISSING_BONE)
                         cleared_activated += 1
             _replace_group_nodes(group, current + generated, bone_mapping)
-            if self.apply_header:
-                _apply_preset_header(group, selected_preset)
             group.active_node_index = len(current)
             action = "替换" if self.replace_existing else "添加"
             detail = f"，清除 {cleared_activated} 个被新骨号激活的旧悬空引用" if cleared_activated else ""

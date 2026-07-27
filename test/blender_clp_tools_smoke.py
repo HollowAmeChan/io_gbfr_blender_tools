@@ -18,9 +18,12 @@ assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINI
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
 from io_gbfr_blender_tools.gbfr_bone_selection import selected_bone_names
 from io_gbfr_blender_tools.gbfr_cloth_blender import (
-    _canonicalize_cloth_bone_ids, _export_bone_ids, clp_encoded_name_reference_groups,
+    _canonicalize_cloth_bone_ids, _export_bone_ids, _header_attr,
+    clp_encoded_name_reference_groups,
 )
-from io_gbfr_blender_tools.gbfr_cloth_format import ClpNode, MISSING_BONE
+from io_gbfr_blender_tools.gbfr_cloth_format import (
+    CLP_HEADER_FLOATS, CLP_HEADER_INTS, ClpNode, MISSING_BONE,
+)
 from io_gbfr_blender_tools.gbfr_export import _draw_clp_encoded_name_warnings
 from io_gbfr_blender_tools.gbfr_model_export_v2 import (
     appended_bone_export_name_map,
@@ -34,8 +37,7 @@ armature = active_session_armature(bpy.context)
 assert armature is not None and armature.gbfr_cloth.enabled
 state = armature.gbfr_cloth
 create_rna = bpy.ops.gbfr.clp_create_from_selection.get_rna_type()
-assert create_rna.properties["apply_header"].default is False
-assert create_rna.properties["apply_header"].name == "覆盖物理参数"
+assert "apply_header" not in create_rna.properties
 targets = resolve_model_export_targets(state.workspace_path, state.model_id)
 source_skeleton = ModelSkeleton.GetRootAs(bytearray(targets.reference_skeleton.read_bytes()), 0)
 
@@ -144,6 +146,13 @@ for name in all_names:
 
 state.active_clp_index = next(index for index, group in enumerate(state.clp_groups) if group.group_id == 2)
 group = state.clp_groups[state.active_clp_index]
+setattr(group, _header_attr("airResistance_"), 0.123456)
+group.gravity_vector = (0.125, -0.004, 0.25, 1.0)
+header_before = {
+    name: getattr(group, _header_attr(name))
+    for name in CLP_HEADER_FLOATS + CLP_HEADER_INTS
+}
+gravity_before = tuple(group.gravity_vector)
 new_ids = {export_ids[name] for name in grid_names}
 first_chain_names = grid_names[:2]
 remaining_chain_names = grid_names[2:]
@@ -172,7 +181,6 @@ assert bpy.ops.gbfr.clp_create_from_selection(
     preset_key="SHORT_HAIR",
     topology="CHAINS",
     closed=False,
-    apply_header=False,
 ) == {"FINISHED"}
 assert len(group.nodes) == len(original_nodes) + len(first_chain_names)
 after_first_add = {node.bone: node_snapshot(node) for node in group.nodes}
@@ -188,7 +196,6 @@ assert bpy.ops.gbfr.clp_create_from_selection(
     preset_key="SHORT_HAIR",
     topology="CHAINS",
     closed=False,
-    apply_header=False,
 ) == {"FINISHED"}
 assert len(group.nodes) == len(original_nodes) + len(grid_names)
 after_add = {node.bone: node for node in group.nodes}
@@ -229,9 +236,13 @@ assert bpy.ops.gbfr.clp_create_from_selection(
     preset_key="SKIRT",
     topology="GRID",
     closed=False,
-    apply_header=True,
 ) == {"FINISHED"}
 group = state.clp_groups[state.active_clp_index]
+assert header_before == {
+    name: getattr(group, _header_attr(name))
+    for name in CLP_HEADER_FLOATS + CLP_HEADER_INTS
+}
+assert gravity_before == tuple(group.gravity_vector)
 assert len(group.nodes) == 6
 by_bone = {node.bone: node for node in group.nodes}
 a1, a2, b1, b2, c1, c2 = (export_ids[name] for name in grid_names)

@@ -21,7 +21,7 @@ def chain(prefix, root_id, length):
 class ClothToolTests(unittest.TestCase):
     def test_open_grid_uses_root_name_order_and_parent_depth(self):
         selected = chain("Skirt_B", 200, 3) + chain("Skirt_A", 100, 3)
-        nodes, _preset, chains = generate_nodes(selected, "SKIRT", "GRID", False)
+        nodes, chains = generate_nodes(selected, "SKIRT", "GRID", False)
         self.assertEqual(["Skirt_A_01", "Skirt_B_01"], [value[0].name for value in chains])
         by_id = {node.bone: node for node in nodes}
         self.assertEqual(101, by_id[100].down)
@@ -35,7 +35,7 @@ class ClothToolTests(unittest.TestCase):
 
     def test_closed_grid_connects_first_root_to_last(self):
         selected = chain("C", 300, 2) + chain("A", 100, 2) + chain("B", 200, 2)
-        nodes, _preset, _chains = generate_nodes(selected, "SKIRT", "GRID", True)
+        nodes, _chains = generate_nodes(selected, "SKIRT", "GRID", True)
         by_id = {node.bone: node for node in nodes}
         self.assertEqual(300, by_id[100].side)
         self.assertEqual(100, by_id[200].side)
@@ -52,7 +52,7 @@ class ClothToolTests(unittest.TestCase):
             SelectedBone("HairBack_B_05", 7, "HairBack_B_04"),
             SelectedBone("HairBack_B_06", 8, "HairBack_B_05"),
         ]
-        nodes, _preset, chains = generate_nodes(selected, "SKIRT", "CHAINS", False)
+        nodes, chains = generate_nodes(selected, "SKIRT", "CHAINS", False)
         self.assertEqual(
             [
                 [
@@ -87,7 +87,7 @@ class ClothToolTests(unittest.TestCase):
             SelectedBone("Branch_B", 2, "Root"),
             SelectedBone("Branch_A", 3, "Root"),
         ]
-        nodes, _preset, chains = generate_nodes(selected, "LONG_HAIR", "CHAINS", False)
+        nodes, chains = generate_nodes(selected, "LONG_HAIR", "CHAINS", False)
         self.assertEqual(
             [["Root", "Branch_A"], ["Branch_B"]],
             [[bone.name for bone in chain] for chain in chains],
@@ -109,7 +109,7 @@ class ClothToolTests(unittest.TestCase):
 
     def test_delete_only_clears_references_to_removed_nodes(self):
         selected = chain("A", 100, 3) + chain("B", 200, 3)
-        nodes, _preset, _chains = generate_nodes(selected, "SKIRT", "GRID", False)
+        nodes, _chains = generate_nodes(selected, "SKIRT", "GRID", False)
         survivors, removed, cleared = delete_nodes(nodes, {101})
         by_id = {node.bone: node for node in survivors}
         self.assertEqual(1, removed)
@@ -122,7 +122,7 @@ class ClothToolTests(unittest.TestCase):
 
     def test_rebuild_preserves_parameters(self):
         selected = chain("B", 200, 3) + chain("A", 100, 3)
-        nodes, _preset, _chains = generate_nodes(selected, "SKIRT", "CHAINS", False)
+        nodes, _chains = generate_nodes(selected, "SKIRT", "CHAINS", False)
         nodes[0].weight = 42.0
         rebuilt = rebuild_nodes(nodes, selected, "GRID", False)
         by_id = {node.bone: node for node in rebuilt}

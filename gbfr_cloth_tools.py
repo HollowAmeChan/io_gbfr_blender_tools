@@ -24,7 +24,6 @@ class ClpPreset:
     key: str
     label: str
     topology: str
-    header: dict[str, int | float | tuple[float, float, float, float]]
     curves: dict[str, tuple[tuple[float, float], ...]]
     offset: tuple[float, float, float, float] = (0.1, 0.0, 0.0, 1.0)
     joint_scale: float = 1.0
@@ -56,20 +55,8 @@ def _depth_curve(values: Iterable[float]) -> tuple[tuple[float, float], ...]:
     return tuple((index / denominator, value) for index, value in enumerate(values))
 
 
-def _header(**values):
-    return values
-
-
 _SKIRT = ClpPreset(
     "SKIRT", "裙摆", "GRID",
-    _header(
-        airResistance_=0.65, windResistance_=0.76, stretchy_=0.1,
-        stretchyHInner_=0.1, stretchyWOuter_=0.1, stretchyWInner_=1.0,
-        gravityVec_=(0.0, -0.001, 0.0, 1.0), localGravityType_=2,
-        localGravityRate_=0.07, localGravityBlendRate_=0.85,
-        originalRate_=0.0, bHitFloorEnable_=1, bWorldWindEnable_=1,
-        moveSpdRate_=0.5,
-    ),
     {
         "rotation_limit": _depth_curve(map(math.radians, (10, 15, 40, 90, 90, 90))),
         "friction": _depth_curve((0.9, 0.9, 0.9, 0.3, 0.3, 0.3)),
@@ -83,14 +70,6 @@ _SKIRT = ClpPreset(
 
 _SHAPED_CLOTH = ClpPreset(
     "SHAPED_CLOTH", "定型布片 / 袖子", "GRID",
-    _header(
-        airResistance_=0.6, windResistance_=0.5, stretchy_=0.5,
-        stretchyHInner_=0.1, stretchyWOuter_=0.5, stretchyWInner_=1.0,
-        gravityVec_=(0.0, -0.001, 0.0, 1.0), localGravityType_=2,
-        localGravityRate_=0.01, localGravityBlendRate_=0.5,
-        originalRate_=0.05, bHitFloorEnable_=0, bWorldWindEnable_=1,
-        moveSpdRate_=0.5,
-    ),
     {
         "rotation_limit": _depth_curve(map(math.radians, (10, 60, 60))),
         "friction": _depth_curve((0.9, 0.9, 0.9)),
@@ -104,14 +83,6 @@ _SHAPED_CLOTH = ClpPreset(
 
 _LONG_HAIR = ClpPreset(
     "LONG_HAIR", "长发", "CHAINS",
-    _header(
-        airResistance_=0.77, windResistance_=0.77, stretchy_=0.2,
-        stretchyHInner_=0.0, stretchyWOuter_=0.2, stretchyWInner_=1.0,
-        gravityVec_=(0.0, -0.001, 0.0, 1.0), localGravityType_=2,
-        localGravityRate_=0.05, localGravityBlendRate_=0.6,
-        originalRate_=0.0, bHitFloorEnable_=1, bWorldWindEnable_=1,
-        moveSpdRate_=0.59,
-    ),
     {
         "rotation_limit": _depth_curve(map(math.radians, (45, 30, 50, 180, 180, 180))),
         "friction": _depth_curve((0.9, 0.9, 0.9, 0.9, 0.9, 0.9)),
@@ -125,14 +96,6 @@ _LONG_HAIR = ClpPreset(
 
 _SHORT_HAIR = ClpPreset(
     "SHORT_HAIR", "短发", "CHAINS",
-    _header(
-        airResistance_=0.95, windResistance_=0.25, stretchy_=0.2,
-        stretchyHInner_=0.0, stretchyWOuter_=0.2, stretchyWInner_=1.0,
-        gravityVec_=(0.0, -0.001, 0.0, 1.0), localGravityType_=0,
-        localGravityRate_=0.01, localGravityBlendRate_=0.5,
-        originalRate_=0.4, bHitFloorEnable_=0, bWorldWindEnable_=1,
-        moveSpdRate_=0.5,
-    ),
     {
         "rotation_limit": _depth_curve(map(math.radians, (7, 7, 7))),
         "friction": _depth_curve((0.9, 0.9, 0.9)),
@@ -146,14 +109,6 @@ _SHORT_HAIR = ClpPreset(
 
 _BRAID = ClpPreset(
     "BRAID", "辫子", "CHAINS",
-    _header(
-        airResistance_=0.8, windResistance_=0.8, stretchy_=0.2,
-        stretchyHInner_=0.0, stretchyWOuter_=0.2, stretchyWInner_=0.1,
-        gravityVec_=(0.0, -0.002, 0.0, 1.0), localGravityType_=2,
-        localGravityRate_=0.05, localGravityBlendRate_=0.95,
-        originalRate_=0.0, bHitFloorEnable_=1, bWorldWindEnable_=1,
-        moveSpdRate_=0.5,
-    ),
     {
         "rotation_limit": _depth_curve(map(math.radians, (10, 25, 40, 50, 60, 70, 80, 90))),
         "friction": _depth_curve((0.9,) * 8),
@@ -167,14 +122,6 @@ _BRAID = ClpPreset(
 
 _ROPE = ClpPreset(
     "ROPE", "绳索 / 刀鞘", "CHAINS",
-    _header(
-        airResistance_=0.7, windResistance_=0.74, stretchy_=0.2,
-        stretchyHInner_=1.0, stretchyWOuter_=0.2, stretchyWInner_=1.0,
-        gravityVec_=(0.0, -0.003, 0.0, 1.0), localGravityType_=2,
-        localGravityRate_=0.01, localGravityBlendRate_=0.55,
-        originalRate_=0.001, bHitFloorEnable_=1, bWorldWindEnable_=1,
-        moveSpdRate_=0.5,
-    ),
     {
         "rotation_limit": _depth_curve((math.pi / 2.0,) * 10),
         "friction": _depth_curve((0.95,) * 10),
@@ -328,7 +275,7 @@ def count_nonreciprocal_up_links(nodes: Iterable[ClpNode]) -> int:
     )
 
 
-def generate_nodes(selected: Iterable[SelectedBone], preset_key: str, topology: str | None = None, closed: bool = False) -> tuple[list[ClpNode], ClpPreset, list[list[SelectedBone]]]:
+def generate_nodes(selected: Iterable[SelectedBone], preset_key: str, topology: str | None = None, closed: bool = False) -> tuple[list[ClpNode], list[list[SelectedBone]]]:
     chosen_preset = preset(preset_key)
     topology = topology or chosen_preset.topology
     if topology not in {"CHAINS", "GRID"}:
@@ -359,7 +306,7 @@ def generate_nodes(selected: Iterable[SelectedBone], preset_key: str, topology: 
                 axis_adjust_rate=chosen_preset.axis_adjust_rate,
                 **values,
             ))
-    return nodes, chosen_preset, chains
+    return nodes, chains
 
 
 def delete_nodes(nodes: Iterable[ClpNode], bone_ids: Iterable[int]) -> tuple[list[ClpNode], int, int]:

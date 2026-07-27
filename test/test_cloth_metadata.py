@@ -16,6 +16,16 @@ class ClothMetadataTests(unittest.TestCase):
         separately_drawn = {"dataVersion_", "id_", "useCollisionFlags_"}
         self.assertEqual(fields, grouped | separately_drawn)
 
+    def test_group_preset_experience_is_kept_in_field_descriptions(self):
+        former_preset_fields = {
+            "airResistance_", "windResistance_", "stretchy_", "stretchyHInner_",
+            "stretchyWOuter_", "stretchyWInner_", "originalRate_",
+            "localGravityRate_", "localGravityBlendRate_", "moveSpdRate_",
+            "bWorldWindEnable_", "localGravityType_", "bHitFloorEnable_",
+        }
+        for name in former_preset_fields:
+            self.assertIn("经验参考", CLP_HEADER_UI[name][1], name)
+
 
 if __name__ == "__main__":
     unittest.main()
