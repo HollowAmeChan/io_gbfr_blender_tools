@@ -44,6 +44,7 @@ class GBFRAnimationEntryProperties(PropertyGroup):
     action_name: StringProperty(name="Base Action")
     edit_action_name: StringProperty(name="Edit Action")
     passthrough_track_count: IntProperty(name="原样保留轨道")
+    export_exists: BoolProperty(name="已有 unpack MOT")
     validation_status: StringProperty(name="验证状态")
 
 
@@ -67,6 +68,8 @@ class GBFRAnimationStateProperties(PropertyGroup):
     active_animation_index: IntProperty(default=0, update=_selection_update)
     suspend_updates: BoolProperty(default=False)
     preview_active: BoolProperty(default=False)
+    export_preview_active: BoolProperty(default=False)
+    export_preview_entry_name: StringProperty()
     active_action_name: StringProperty(name="当前 Action")
     search: StringProperty(name="筛选")
     last_status: StringProperty()
@@ -180,6 +183,8 @@ def _stop_preview(armature, reset=True):
     state = armature.gbfr_animation
     _ACTIVE_CLIPS.pop(state.cache_key, None)
     state.preview_active = False
+    state.export_preview_active = False
+    state.export_preview_entry_name = ""
     if reset:
         _reset_pose(armature)
 
@@ -220,7 +225,7 @@ def _frame_change_handler(scene, _depsgraph=None):
             state = getattr(armature, "gbfr_animation", None)
             if (
                 not state or not state.enabled or not state.preview_active
-                or _has_imported_actions(state)
+                or (_has_imported_actions(state) and not state.export_preview_active)
             ):
                 continue
             runtime = _ACTIVE_CLIPS.get(state.cache_key)
@@ -237,6 +242,8 @@ def _load_post_handler(_unused):
     for obj in bpy.data.objects:
         if obj.type == "ARMATURE" and hasattr(obj, "gbfr_animation") and obj.gbfr_animation.preview_active:
             obj.gbfr_animation.preview_active = False
+            obj.gbfr_animation.export_preview_active = False
+            obj.gbfr_animation.export_preview_entry_name = ""
             _reset_pose(obj)
 
 
@@ -249,13 +256,28 @@ def load_selected_animation(armature, scene):
     index = min(max(state.active_animation_index, 0), len(state.animations) - 1)
     entry = state.animations[index]
     clip = load_mot(entry.path)
+    _start_runtime_preview(armature, scene, clip)
+    state.last_status = (
+        f"正在预览 {entry.display_name}：{clip.frame_count} 帧 / {len(clip.tracks)} 轨道"
+    )
+
+
+def _start_runtime_preview(
+    armature, scene, clip: AnimationClip, *, exported_entry_name: str = "",
+) -> None:
     for other in bpy.data.objects:
-        if other != armature and other.type == "ARMATURE" and hasattr(other, "gbfr_animation") and other.gbfr_animation.preview_active:
+        if (
+            other != armature and other.type == "ARMATURE"
+            and hasattr(other, "gbfr_animation")
+            and other.gbfr_animation.preview_active
+        ):
             _stop_preview(other)
-    _reset_pose(armature)
+    _stop_preview(armature)
+    state = armature.gbfr_animation
     _ACTIVE_CLIPS[state.cache_key] = _make_runtime(armature, clip)
     state.preview_active = True
-    state.last_status = f"正在预览 {entry.display_name}：{clip.frame_count} 帧 / {len(clip.tracks)} 轨道"
+    state.export_preview_active = bool(exported_entry_name)
+    state.export_preview_entry_name = exported_entry_name
     scene.render.fps = 60
     scene.render.fps_base = 1.0
     scene.frame_start = 0
@@ -289,6 +311,7 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
             item.frame_count = header.frame_count
             item.track_count = header.track_count
             item.category = category
+            item.export_exists = asset.unpack.is_file()
             base = _find_saved_action(state, item.name, _ROLE_BASE)
             edit = _find_saved_action(state, item.name, _ROLE_EDIT)
             item.action_name = base.name if base is not None else ""
@@ -802,6 +825,7 @@ class GBFR_OT_AnimationExportAction(Operator):
             destination = write_mot_template_atomic(
                 clip, sampled, _entry_unpack_path(armature, entry),
             )
+            entry.export_exists = True
             entry.validation_status = "已导出"
             state.last_status = f"已独立导出 {entry.display_name} 到 {destination}"
             self.report({"INFO"}, state.last_status)
@@ -814,6 +838,160 @@ class GBFR_OT_AnimationExportAction(Operator):
         finally:
             if previous is not None and previous != entry and _entry_action(previous) is not None:
                 _bind_entry_action(armature, previous, context.scene)
+
+
+class GBFR_OT_AnimationToggleExportPreview(Operator):
+    bl_idname = "gbfr.animation_toggle_export_preview"
+    bl_label = "切换导出 MOT 预览"
+    bl_description = "直接预览 unpack 中已写出的 MOT；再次点击返回 Action 编辑"
+
+    animation_index: IntProperty()
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_animation
+        if not 0 <= self.animation_index < len(state.animations):
+            return {"CANCELLED"}
+        entry = state.animations[self.animation_index]
+        try:
+            if (
+                state.export_preview_active
+                and state.export_preview_entry_name == entry.name
+            ):
+                _stop_preview(armature)
+                previous = _action_entry(state, state.active_action_name)
+                if previous is not None and _entry_action(previous) is not None:
+                    _bind_entry_action(armature, previous, context.scene)
+                    state.last_status = f"已返回 Action 编辑：{previous.display_name}"
+                elif not _has_imported_actions(state):
+                    state.suspend_updates = True
+                    state.active_animation_index = self.animation_index
+                    state.suspend_updates = False
+                    load_selected_animation(armature, context.scene)
+                else:
+                    state.last_status = "已结束导出 MOT 预览"
+                return {"FINISHED"}
+
+            destination = _entry_unpack_path(armature, entry)
+            if not destination.is_file():
+                entry.export_exists = False
+                raise ValueError(f"尚未找到已导出的 MOT: {destination}")
+            if context.screen and context.screen.is_animation_playing:
+                bpy.ops.screen.animation_cancel(restore_frame=False)
+            _detach_action_stack(armature)
+            state.suspend_updates = True
+            state.active_animation_index = self.animation_index
+            state.suspend_updates = False
+            clip = load_mot(destination)
+            _start_runtime_preview(
+                armature, context.scene, clip, exported_entry_name=entry.name,
+            )
+            entry.export_exists = True
+            state.last_status = (
+                f"正在预览已导出 MOT：{destination.name}；Action/NLA 已临时解除"
+            )
+            self.report({"INFO"}, state.last_status)
+            return {"FINISHED"}
+        except Exception as error:
+            state.last_status = str(error)
+            self.report({"ERROR"}, state.last_status)
+            return {"CANCELLED"}
+
+
+class GBFR_OT_AnimationReimportExported(Operator):
+    bl_idname = "gbfr.animation_reimport_exported"
+    bl_label = "导回导出的 MOT"
+    bl_description = "将 unpack MOT 重新烘焙为 Base Action，并替换当前 Base/Edit"
+    bl_options = {"REGISTER", "UNDO"}
+
+    animation_index: IntProperty()
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_animation
+        if not 0 <= self.animation_index < len(state.animations):
+            return {"CANCELLED"}
+        entry = state.animations[self.animation_index]
+        old_base = _entry_action(entry)
+        old_edit = _entry_edit_action(entry)
+        previous = _action_entry(state, state.active_action_name)
+        old_values = {
+            "path": entry.path,
+            "action_name": entry.action_name,
+            "edit_action_name": entry.edit_action_name,
+            "frame_count": entry.frame_count,
+            "track_count": entry.track_count,
+            "internal_name": entry.internal_name,
+            "passthrough_track_count": entry.passthrough_track_count,
+            "validation_status": entry.validation_status,
+        }
+        imported = None
+        try:
+            destination = _entry_unpack_path(armature, entry)
+            if not destination.is_file():
+                entry.export_exists = False
+                raise ValueError(f"尚未找到已导出的 MOT: {destination}")
+            clip = load_mot(destination)
+            samples, passthrough = _clip_basis_samples(armature, clip)
+            if state.export_preview_active:
+                _stop_preview(armature)
+            _detach_action_stack(armature)
+            entry.path = str(destination)
+            entry.frame_count = clip.frame_count
+            entry.track_count = len(clip.tracks)
+            entry.internal_name = clip.name
+            imported = _create_action_from_basis_samples(
+                armature, state, entry, samples, _ROLE_BASE, "Exported",
+            )
+            imported["gbfr_mot_passthrough_tracks"] = len(passthrough)
+            imported["gbfr_mot_imported_from_unpack"] = str(destination)
+            entry.action_name = imported.name
+            entry.edit_action_name = ""
+            entry.passthrough_track_count = len(passthrough)
+            state.suspend_updates = True
+            state.active_animation_index = self.animation_index
+            state.suspend_updates = False
+            _bind_entry_action(armature, entry, context.scene)
+            action_error, projection_error = _validate_bound_action(
+                armature, entry, clip, context.scene,
+            )
+            if old_edit is not None:
+                bpy.data.actions.remove(old_edit)
+            if old_base is not None:
+                bpy.data.actions.remove(old_base)
+            entry.export_exists = True
+            entry.validation_status = "已从 unpack 导回"
+            state.last_status = (
+                f"已导回 {destination.name} 为新 Base Action；"
+                f"Action 误差 {action_error:.2g}，TRS 投影 {projection_error:.2g}"
+            )
+            if passthrough:
+                state.last_status += f"；原样保留 {len(passthrough)} 条不可编辑轨道"
+            self.report({"INFO"}, state.last_status)
+            return {"FINISHED"}
+        except Exception as error:
+            _detach_action_stack(armature)
+            for name, value in old_values.items():
+                setattr(entry, name, value)
+            if imported is not None and bpy.data.actions.get(imported.name) is not None:
+                bpy.data.actions.remove(imported)
+            if old_base is not None and bpy.data.actions.get(old_base.name) is not None:
+                _bind_entry_action(armature, entry, context.scene)
+            elif (
+                previous is not None and _entry_action(previous) is not None
+                and previous != entry
+            ):
+                _bind_entry_action(armature, previous, context.scene)
+            state.last_status = str(error)
+            self.report({"ERROR"}, state.last_status)
+            return {"CANCELLED"}
 
 
 class GBFR_OT_AnimationRemoveAction(Operator):
@@ -836,6 +1014,8 @@ class GBFR_OT_AnimationRemoveAction(Operator):
         edit = _entry_edit_action(entry)
         if base is None:
             return {"CANCELLED"}
+        if state.export_preview_active:
+            _stop_preview(armature)
         if state.active_action_name == base.name:
             _detach_action_stack(armature)
             state.active_action_name = ""
@@ -992,7 +1172,10 @@ class GBFR_OT_AnimationPlayPause(Operator):
         if armature is None:
             return {"CANCELLED"}
         state = armature.gbfr_animation
-        if _has_imported_actions(state):
+        if state.export_preview_active:
+            if not state.preview_active:
+                return {"CANCELLED"}
+        elif _has_imported_actions(state):
             if not state.active_action_name or bpy.data.actions.get(state.active_action_name) is None:
                 self.report({"ERROR"}, "请先切换到一个已导入 Action")
                 return {"CANCELLED"}
@@ -1022,7 +1205,25 @@ class GBFR_OT_AnimationStop(Operator):
         if context.screen and context.screen.is_animation_playing:
             bpy.ops.screen.animation_cancel(restore_frame=False)
         state = armature.gbfr_animation
-        if _has_imported_actions(state):
+        if state.export_preview_active:
+            preview_entry = next(
+                (
+                    entry for entry in state.animations
+                    if entry.name == state.export_preview_entry_name
+                ),
+                None,
+            )
+            _stop_preview(armature)
+            previous = _action_entry(state, state.active_action_name)
+            if previous is not None and _entry_action(previous) is not None:
+                _bind_entry_action(armature, previous, context.scene)
+                state.last_status = f"已停止导出预览并返回 {previous.display_name}"
+            else:
+                state.last_status = (
+                    f"已停止 {preview_entry.display_name} 的导出预览"
+                    if preview_entry is not None else "已停止导出 MOT 预览"
+                )
+        elif _has_imported_actions(state):
             state.last_status = "已停止 Action/NLA 时间轴播放"
         else:
             _stop_preview(armature)
@@ -1122,7 +1323,9 @@ class GBFR_PT_AnimationPreview(Panel):
         controls.operator("gbfr.animation_first_frame", text="", icon="REW")
         controls.operator("gbfr.animation_stop", text="", icon="CANCEL")
         imported = _has_imported_actions(state)
-        if imported:
+        if state.export_preview_active:
+            controls.label(text="导出 MOT", icon="FILE_MOVIE")
+        elif imported:
             controls.label(text="Action/NLA", icon="NLA")
         else:
             controls.label(text="源 MOT", icon="FILE_MOVIE")
@@ -1136,13 +1339,35 @@ class GBFR_PT_AnimationPreview(Panel):
                 layout.label(
                     text=f"文件名推测：{annotation}", icon="QUESTION",
                 )
+            previewing_export = (
+                state.export_preview_active
+                and state.export_preview_entry_name == item.name
+            )
+            export_tools = layout.row(align=True)
+            operator = export_tools.operator(
+                "gbfr.animation_toggle_export_preview",
+                text="返回 Action" if previewing_export else "预览导出 MOT",
+                icon="LOOP_BACK" if previewing_export else "FILE_MOVIE",
+            )
+            operator.animation_index = state.active_animation_index
+            operator = export_tools.operator(
+                "gbfr.animation_reimport_exported",
+                text="导回 Action", icon="IMPORT",
+            )
+            operator.animation_index = state.active_animation_index
             if state.preview_active or imported:
                 layout.prop(context.scene, "frame_current", text="帧")
         if imported:
             info = layout.box()
-            info.label(text="已有可编辑 Action，源 MOT 直接预览已禁用", icon="LOCKED")
+            if state.export_preview_active:
+                info.label(
+                    text="正在直接预览 unpack MOT；Action/NLA 暂时解除",
+                    icon="FILE_MOVIE",
+                )
+            else:
+                info.label(text="已有可编辑 Action，源 MOT 直接预览已禁用", icon="LOCKED")
             active_entry = _action_entry(state, state.active_action_name)
-            if active_entry is not None:
+            if active_entry is not None and not state.export_preview_active:
                 info.label(text=f"当前编辑：{active_entry.display_name}", icon="ACTION")
                 if active_entry.validation_status:
                     info.label(text=active_entry.validation_status, icon="CHECKMARK")
@@ -1167,6 +1392,8 @@ classes = (
     GBFRAnimationEntryProperties, GBFRAnimationStateProperties,
     GBFR_OT_AnimationImportAction, GBFR_OT_AnimationActivateAction,
     GBFR_OT_AnimationValidateAction, GBFR_OT_AnimationExportAction,
+    GBFR_OT_AnimationToggleExportPreview,
+    GBFR_OT_AnimationReimportExported,
     GBFR_OT_AnimationRemoveAction,
     GBFR_OT_AnimationAddEditLayer, GBFR_OT_AnimationDeleteEditLayer,
     GBFR_OT_AnimationMergeEditLayer,

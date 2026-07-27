@@ -17,8 +17,8 @@ assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINI
 
 from io_gbfr_blender_tools.gbfr_animation import load_mot
 from io_gbfr_blender_tools.gbfr_animation_blender import (
-    _entry_action, _entry_annotation, _entry_edit_action, _entry_unpack_path,
-    _has_imported_actions, load_selected_animation,
+    _ACTIVE_CLIPS, _entry_action, _entry_annotation, _entry_edit_action,
+    _entry_unpack_path, _has_imported_actions, load_selected_animation,
 )
 from io_gbfr_blender_tools.gbfr_session import active_session_armature
 
@@ -75,6 +75,19 @@ with tempfile.TemporaryDirectory(prefix="gbfr_mot_roundtrip_") as temporary:
         animation_blender.resolve_model_bundle = original_resolver
     assert bpy.ops.gbfr.animation_export_action(animation_index=indices[0]) == {"FINISHED"}
     exported = load_mot(output)
+    assert first.export_exists
+    assert bpy.ops.gbfr.animation_toggle_export_preview(
+        animation_index=indices[0],
+    ) == {"FINISHED"}
+    assert state.preview_active and state.export_preview_active
+    assert state.export_preview_entry_name == first.name
+    assert armature.animation_data.action is None
+    assert _ACTIVE_CLIPS[state.cache_key]["clip"].path == output.resolve()
+    assert bpy.ops.gbfr.animation_toggle_export_preview(
+        animation_index=indices[0],
+    ) == {"FINISHED"}
+    assert not state.preview_active and not state.export_preview_active
+    assert armature.animation_data.action == first_base
     assert len(exported.tracks) == len(clip.tracks)
     for source_track, output_track in zip(clip.tracks, exported.tracks):
         assert (source_track.bone_id, source_track.property, source_track.unknown) == (
@@ -148,9 +161,25 @@ with tempfile.TemporaryDirectory(prefix="gbfr_mot_edit_") as temporary:
         for frame in range(clip.frame_count):
             assert abs(output_track.sample(frame) - source_track.sample(frame)) < 2e-5
 
+    old_base_name = first_base.name
+    old_edit_name = edit.name
+    assert bpy.ops.gbfr.animation_reimport_exported(
+        animation_index=indices[0],
+    ) == {"FINISHED"}
+    reimported = _entry_action(first)
+    assert reimported is not None and reimported.name != old_base_name
+    reimported_name = reimported.name
+    assert _entry_edit_action(first) is None
+    assert bpy.data.actions.get(old_base_name) is None
+    assert bpy.data.actions.get(old_edit_name) is None
+    assert Path(first.path) == output.resolve()
+    assert armature.animation_data.action == reimported
+    first.path = first.source_path
+    assert bpy.ops.gbfr.animation_add_edit_layer() == {"FINISHED"}
+
 assert bpy.ops.gbfr.animation_merge_edit_layer() == {"FINISHED"}
 merged = _entry_action(first)
-assert merged is not None and merged != first_base
+assert merged is not None and merged.name != reimported_name
 assert _entry_edit_action(first) is None
 assert armature.animation_data.action == merged
 assert len(armature.animation_data.nla_tracks) == 0

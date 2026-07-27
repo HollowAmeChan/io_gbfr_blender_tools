@@ -38,6 +38,10 @@ for bone in bpy.context.object.data.edit_bones:
 
 源 MOT 预览与 Action 编辑保持会话级互斥。当前会话没有任何已导入 Action 时，列表下方沿用源 MOT 播放；一旦导入第一个 Action，插件立即停止源预览、清除内存剪辑并恢复静止姿态，随后禁用旧的源文件播放路径。只要会话仍保留任意 MOT Action，播放按钮就只驱动 Blender 时间轴和当前 Action/NLA，不能再次让帧回调直接覆盖 `matrix_basis`。删除会话中的全部 MOT Action 后，源 MOT 预览才重新启用。
 
+已导出到 unpack 的动画会额外显示“预览导出 MOT”。这是上述互斥规则的显式验证模式：插件临时解除当前 Action/NLA，重新解析磁盘上的 unpack `.mot` 并直接预览实际写出结果；“返回 Action”会恢复原编辑栈。该模式不会删除或重新烘焙 Action，也不会把普通源 MOT 播放重新启用。
+
+“导回 Action”会把 unpack `.mot` 重新解析并逐帧烘焙为新的 Base Action。它用于把已经验证过的游戏文件作为下一轮编辑基线；成功后原 Base 和可选 Edit 会被新 Base 替换。操作执行前要求确认，并且只有新 Action 完成轨道检查和矩阵验证后才删除旧数据。导回后当前动画的模板路径指向 unpack 文件，source 路径仍保留用于工作区追踪。
+
 ## 已确认的 MOT 通道
 
 每条 MOT 轨道只保存一个骨号的一个轴向属性。当前解析器的属性映射如下：
