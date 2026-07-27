@@ -21,7 +21,9 @@ from .gbfr_cloth_format import (
     CLP_HEADER_FLOATS, CLP_HEADER_INTS, ClhCollision, ClhDocument,
     ClpDocument, ClpNode, MISSING_BONE, load_clh, load_clp, write_clh, write_clp,
 )
-from .gbfr_cloth_tools import PRESETS, SelectedBone, generate_nodes, preset, rebuild_nodes
+from .gbfr_cloth_tools import (
+    PRESETS, SelectedBone, count_nonreciprocal_up_links, generate_nodes, preset, rebuild_nodes,
+)
 from .gbfr_model_export_v2 import appended_bone_export_name_map, export_bone_name
 from .Entities.ModelSkeleton import ModelSkeleton
 from .gbfr_workspace import ModelBundle, resolve_model_bundle, resolve_model_export_targets
@@ -295,7 +297,7 @@ class GBFRClothStateProperties(PropertyGroup):
         name="连接方式", default="GRID",
         items=(
             ("GRID", "横向网格", "按 root 名排序并连接相同深度"),
-            ("CHAINS", "独立骨链", "只生成真实父子纵向连接"),
+            ("CHAINS", "分叉骨链（实验）", "所有子支保留真实上游，父节点只向主支写入下游"),
         ),
     )
     clp_tool_closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
@@ -1007,7 +1009,7 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         name="连接方式", default="GRID",
         items=(
             ("GRID", "横向网格", "按 root 名排序并连接相同深度"),
-            ("CHAINS", "独立骨链", "只生成真实父子纵向连接"),
+            ("CHAINS", "分叉骨链（实验）", "所有子支保留真实上游，父节点只向主支写入下游"),
         ),
     )
     closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
@@ -1110,7 +1112,9 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             if deduplicated_nodes:
                 repairs.append(f"合并 {deduplicated_nodes} 个重复节点")
             repair_detail = f"，导出前修复：{'、'.join(repairs)}" if repairs else ""
-            state.last_status = f"已{action} {len(generated)} 个节点 / {len(chains)} 串{repair_detail}{detail}，尚未写入 XML"
+            branch_count = count_nonreciprocal_up_links(generated)
+            branch_detail = f"，实验分叉边 {branch_count}" if branch_count else ""
+            state.last_status = f"已{action} {len(generated)} 个节点 / {len(chains)} 串{branch_detail}{repair_detail}{detail}，尚未写入 XML"
             self.report({"INFO"}, state.last_status)
             _tag_redraw()
             return {"FINISHED"}
@@ -1277,7 +1281,7 @@ class GBFR_OT_ClpRebuildConnections(Operator):
         name="连接方式", default="GRID",
         items=(
             ("GRID", "横向网格", "按 root 名排序并连接相同深度"),
-            ("CHAINS", "独立骨链", "只生成真实父子纵向连接"),
+            ("CHAINS", "分叉骨链（实验）", "所有子支保留真实上游，父节点只向主支写入下游"),
         ),
     )
     closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
@@ -1323,7 +1327,9 @@ class GBFR_OT_ClpRebuildConnections(Operator):
             _replace_group_nodes(group, values, bone_mapping)
             state.clp_tool_topology = self.topology
             state.clp_tool_closed = self.closed
-            state.last_status = f"已重建 {len(values)} 个节点的连接，物理参数保持不变"
+            branch_count = count_nonreciprocal_up_links(values)
+            branch_detail = f"，实验分叉边 {branch_count}" if branch_count else ""
+            state.last_status = f"已重建 {len(values)} 个节点的连接{branch_detail}，物理参数保持不变"
             self.report({"INFO"}, state.last_status)
             _tag_redraw()
             return {"FINISHED"}
@@ -1771,19 +1777,23 @@ def _draw_armature(armature, batches):
     mapping = _bone_map(armature)
     groups = _visible_clp(state)
     if state.show_topology:
-        longitudinal, lateral, fixed, points = [], [], [], []
+        longitudinal, branches, lateral, fixed, points = [], [], [], [], []
         for group in groups:
             positions = {node.bone: _bone_point(armature, mapping, node.bone) for node in group.nodes}
+            nodes_by_id = {node.bone: node for node in group.nodes}
             for node in group.nodes:
                 origin = positions.get(node.bone)
                 _append_line(longitudinal, origin, positions.get(node.down))
+                parent = nodes_by_id.get(node.up)
+                if node.up != MISSING_BONE and (parent is None or parent.down != node.bone):
+                    _append_line(branches, origin, positions.get(node.up))
                 _append_line(lateral, origin, positions.get(node.side))
                 if node.poly != node.side:
                     _append_line(lateral, origin, positions.get(node.poly))
                 _append_line(fixed, origin, positions.get(node.fix))
                 if state.show_points:
                     _append_cross(points, origin, 0.006)
-        batches.extend(((longitudinal, (0.25, 0.95, 0.45, 0.95), 2.0), (lateral, (0.95, 0.35, 0.85, 0.95), 2.0), (fixed, (1.0, 0.55, 0.15, 0.95), 2.4), (points, (1.0, 0.9, 0.25, 0.95), 1.2)))
+        batches.extend(((longitudinal, (0.25, 0.95, 0.45, 0.95), 2.0), (branches, (1.0, 0.42, 0.12, 0.98), 2.6), (lateral, (0.95, 0.35, 0.85, 0.95), 2.0), (fixed, (1.0, 0.55, 0.15, 0.95), 2.4), (points, (1.0, 0.9, 0.25, 0.95), 1.2)))
     if state.show_collisions:
         collision_lines, points = [], []
         active_bone = armature.data.bones.active

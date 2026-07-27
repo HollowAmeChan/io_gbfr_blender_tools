@@ -276,6 +276,13 @@ def _topology_links(chains: list[list[SelectedBone]], topology: str, closed: boo
         for current, following in zip(chain, chain[1:]):
             links[current.bone_id]["down"] = following.bone_id
             links[following.bone_id]["up"] = current.bone_id
+    if topology == "CHAINS":
+        by_name = {bone.name: bone for chain in chains for bone in chain}
+        for bone in by_name.values():
+            parent = by_name.get(bone.parent_name)
+            if parent is not None:
+                links[bone.bone_id]["up"] = parent.bone_id
+        return links
     if topology != "GRID" or len(chains) < 2:
         return links
     for chain_index in range(1, len(chains)):
@@ -292,6 +299,35 @@ def _topology_links(chains: list[list[SelectedBone]], topology: str, closed: boo
     return links
 
 
+def _hierarchy_depths(chains: list[list[SelectedBone]]) -> dict[int, int]:
+    by_name = {bone.name: bone for chain in chains for bone in chain}
+    depths: dict[int, int] = {}
+
+    def resolve(bone: SelectedBone) -> int:
+        cached = depths.get(bone.bone_id)
+        if cached is not None:
+            return cached
+        parent = by_name.get(bone.parent_name)
+        depth = 0 if parent is None else resolve(parent) + 1
+        depths[bone.bone_id] = depth
+        return depth
+
+    for bone in by_name.values():
+        resolve(bone)
+    return depths
+
+
+def count_nonreciprocal_up_links(nodes: Iterable[ClpNode]) -> int:
+    values = list(nodes)
+    by_id = {node.bone: node for node in values}
+    return sum(
+        1
+        for node in values
+        if node.up != MISSING_BONE
+        and (node.up not in by_id or by_id[node.up].down != node.bone)
+    )
+
+
 def generate_nodes(selected: Iterable[SelectedBone], preset_key: str, topology: str | None = None, closed: bool = False) -> tuple[list[ClpNode], ClpPreset, list[list[SelectedBone]]]:
     chosen_preset = preset(preset_key)
     topology = topology or chosen_preset.topology
@@ -299,10 +335,12 @@ def generate_nodes(selected: Iterable[SelectedBone], preset_key: str, topology: 
         raise ValueError(f"未知 CLP 拓扑模式: {topology}")
     chains = build_chains(selected, allow_branches=topology == "CHAINS")
     links = _topology_links(chains, topology, closed)
-    max_depth = max(len(chain) for chain in chains) - 1
+    depths = _hierarchy_depths(chains)
+    max_depth = max(depths.values())
     nodes: list[ClpNode] = []
     for chain in chains:
-        for depth, bone in enumerate(chain):
+        for bone in chain:
+            depth = depths[bone.bone_id]
             position = 0.0 if max_depth <= 0 else depth / max_depth
             values = {
                 field: _curve(chosen_preset.curves[field], position)
