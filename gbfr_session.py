@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import bpy
-from bpy.props import BoolProperty, PointerProperty, StringProperty
+from bpy.props import BoolProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import PropertyGroup
 
 
@@ -20,6 +20,11 @@ class GBFRSessionProperties(PropertyGroup):
     armature: PointerProperty(name="骨架", type=bpy.types.Object)
     mesh: PointerProperty(name="主模型", type=bpy.types.Object)
     last_status: StringProperty(name="状态")
+    weight_check_completed: BoolProperty(default=False)
+    weight_check_unnormalized: IntProperty(default=0)
+    weight_check_over_four: IntProperty(default=0)
+    weight_check_meshes: IntProperty(default=0)
+    weight_check_details: StringProperty(default="")
 
 
 class GBFRSceneWorkspaceProperties(PropertyGroup):
@@ -39,6 +44,11 @@ def configure_session(collection, bundle, source_minfo_path, root, armature, mes
     state.armature = armature
     state.mesh = meshes[0] if meshes else None
     state.last_status = "已导入"
+    state.weight_check_completed = False
+    state.weight_check_unnormalized = 0
+    state.weight_check_over_four = 0
+    state.weight_check_meshes = 0
+    state.weight_check_details = ""
     (scene or bpy.context.scene).gbfr_workspace.active_session = collection
     for obj in collection.objects:
         obj["gbfr_session_collection"] = collection.name

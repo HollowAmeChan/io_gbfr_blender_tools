@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 import shutil
@@ -225,6 +226,113 @@ def _draw_clp_numeric_name_warnings(layout, armature):
     return warnings
 
 
+def inspect_export_weights(root, normalization_tolerance=1e-6, max_influences=4):
+    """Inspect positive vertex weights in the hierarchy exported by v2."""
+    details = []
+    total_vertices = 0
+    unnormalized_total = 0
+    over_limit_total = 0
+    meshes = [obj for obj in _hierarchy(root) if obj.type == "MESH"] if root else []
+    for mesh_object in meshes:
+        unnormalized = 0
+        over_limit = 0
+        for vertex in mesh_object.data.vertices:
+            positive_weights = [
+                influence.weight
+                for influence in vertex.groups
+                if influence.weight > 0.0
+            ]
+            if not math.isclose(
+                sum(positive_weights), 1.0,
+                rel_tol=0.0, abs_tol=normalization_tolerance,
+            ):
+                unnormalized += 1
+            if len(positive_weights) > max_influences:
+                over_limit += 1
+        total_vertices += len(mesh_object.data.vertices)
+        unnormalized_total += unnormalized
+        over_limit_total += over_limit
+        if unnormalized or over_limit:
+            details.append((mesh_object.name, unnormalized, over_limit))
+    return {
+        "mesh_count": len(meshes),
+        "vertex_count": total_vertices,
+        "unnormalized": unnormalized_total,
+        "over_limit": over_limit_total,
+        "details": tuple(details),
+    }
+
+
+def _run_export_weight_check(context):
+    from .gbfr_session import active_session_collection, active_session_root
+    collection = active_session_collection(context)
+    root = active_session_root(context)
+    if collection is None or root is None:
+        return None
+    result = inspect_export_weights(root)
+    state = collection.gbfr_session
+    state.weight_check_completed = True
+    state.weight_check_unnormalized = result["unnormalized"]
+    state.weight_check_over_four = result["over_limit"]
+    state.weight_check_meshes = result["mesh_count"]
+    state.weight_check_details = "\n".join(
+        f"{name}: 未归一化 {unnormalized}，超过 4 组 {over_limit}"
+        for name, unnormalized, over_limit in result["details"]
+    )
+    return result
+
+
+def _draw_export_weight_check(layout, state):
+    box = layout.box()
+    row = box.row(align=True)
+    row.label(text="顶点权重检查", icon="GROUP_VERTEX")
+    row.operator(GBFR_OT_CheckExportWeights.bl_idname, text="重新检查", icon="FILE_REFRESH")
+    if not state.weight_check_completed:
+        box.label(text="尚未检查", icon="INFO")
+        return
+    has_errors = state.weight_check_unnormalized or state.weight_check_over_four
+    if has_errors:
+        box.alert = True
+        if state.weight_check_unnormalized:
+            box.label(
+                text=f"未归一化顶点: {state.weight_check_unnormalized}",
+                icon="ERROR",
+            )
+        if state.weight_check_over_four:
+            box.label(
+                text=f"正权重组超过 4 的顶点: {state.weight_check_over_four}",
+                icon="ERROR",
+            )
+        for detail in state.weight_check_details.splitlines():
+            box.label(text=detail)
+    else:
+        box.label(
+            text=f"通过：{state.weight_check_meshes} 个 Mesh 均已归一化且不超过 4 组",
+            icon="CHECKMARK",
+        )
+
+
+class GBFR_OT_CheckExportWeights(Operator):
+    bl_idname = "gbfr.check_export_weights"
+    bl_label = "检查导出权重"
+    bl_description = "检查未归一化顶点和正权重组超过 4 的顶点"
+
+    def execute(self, context):
+        result = _run_export_weight_check(context)
+        if result is None:
+            self.report({"ERROR"}, "请先激活一个 minfo 工作区")
+            return {"CANCELLED"}
+        issues = result["unnormalized"] + result["over_limit"]
+        if issues:
+            self.report(
+                {"WARNING"},
+                f"未归一化 {result['unnormalized']}，超过 4 组 {result['over_limit']}",
+            )
+        else:
+            self.report({"INFO"}, f"权重检查通过，共 {result['vertex_count']} 个顶点")
+        return {"FINISHED"}
+
+
 class ExportSomeData(Operator, ImportHelper):
     """Export the active minfo session to workspace unpack."""
 
@@ -256,6 +364,7 @@ class ExportSomeData(Operator, ImportHelper):
         collection = active_session_collection(context)
         if collection is not None and collection.gbfr_session.workspace_path:
             self.filepath = collection.gbfr_session.workspace_path
+        _run_export_weight_check(context)
         context.window_manager.fileselect_add(self)
         return {"RUNNING_MODAL"}
 
@@ -273,6 +382,7 @@ class ExportSomeData(Operator, ImportHelper):
             return
         state = collection.gbfr_session
         box.label(text=f"当前模型: {state.model_id}", icon="FILE_3D")
+        _draw_export_weight_check(layout, state)
         _draw_clp_numeric_name_warnings(layout, active_session_armature(context))
         try:
             targets = resolve_model_export_targets(self.filepath, state.model_id)
@@ -393,6 +503,7 @@ def menu_func_export(self, _context):
 
 
 def register():
+    bpy.utils.register_class(GBFR_OT_CheckExportWeights)
     bpy.utils.register_class(ExportSomeData)
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
 
@@ -400,3 +511,4 @@ def register():
 def unregister():
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     bpy.utils.unregister_class(ExportSomeData)
+    bpy.utils.unregister_class(GBFR_OT_CheckExportWeights)
