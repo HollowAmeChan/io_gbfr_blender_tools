@@ -732,8 +732,12 @@ def populate_cloth_state(armature: bpy.types.Object, bundle: ModelBundle) -> Non
             _refresh_collision_references(layer, armature)
     state.active_clp_index = min(state.active_clp_index, max(0, len(state.clp_groups) - 1))
     state.active_clh_index = min(state.active_clh_index, max(0, len(state.clh_layers) - 1))
-    state.enabled = True
-    state.last_status = f"已载入 {len(state.clp_groups)} 个 CLP / {len(state.clh_layers)} 个 CLH"
+    state.enabled = bool(state.clp_groups or state.clh_layers)
+    state.last_status = (
+        f"已载入 {len(state.clp_groups)} 个 CLP / {len(state.clh_layers)} 个 CLH"
+        if state.enabled
+        else f"{bundle.model_id} 未登记 CLP/CLH"
+    )
     armature["gbfr_workspace"] = str(bundle.workspace_json)
     armature["gbfr_minfo"] = str(bundle.minfo)
     _tag_redraw()
@@ -932,26 +936,71 @@ def prepare_cloth_for_model_export(
     return pinned, migrated, deduplicated
 
 
-def _save_clp_xml(group, destination: Path) -> None:
-    template = destination if destination.is_file() else Path(group.xml_path)
+def _save_clp_xml(
+    group, destination: Path, *, template_path: Path | None = None,
+    update_path: bool = True,
+) -> None:
+    template = template_path or (destination if destination.is_file() else Path(group.xml_path))
     document = load_clp(template)
     for name in CLP_HEADER_FLOATS + CLP_HEADER_INTS:
         document.header[name] = getattr(group, _header_attr(name))
     document.header["gravityVec_"] = tuple(group.gravity_vector)
     document.nodes = [_node_value(value) for value in group.nodes]
     write_clp(document, destination)
-    group.xml_path = str(destination)
+    if update_path:
+        group.xml_path = str(destination)
 
 
-def _save_clh_xml(layer, destination: Path) -> None:
-    template = destination if destination.is_file() else Path(layer.xml_path)
+def _save_clh_xml(
+    layer, destination: Path, *, template_path: Path | None = None,
+    update_path: bool = True,
+) -> None:
+    template = template_path or (destination if destination.is_file() else Path(layer.xml_path))
     document = load_clh(template)
     document.collisions = [_collision_value(value) for value in layer.collisions]
     collision_ids = [value.collision_id for value in document.collisions]
     if len(collision_ids) != len(set(collision_ids)):
         raise ValueError(f"{layer.name} 包含重复 Collision ID")
     write_clh(document, destination)
-    layer.xml_path = str(destination)
+    if update_path:
+        layer.xml_path = str(destination)
+
+
+def stage_cloth_xml_for_workspace(
+    armature, minfo_path: str | Path, workspace_json: str | Path,
+    staging_directory: str | Path, exported_bone_names,
+) -> tuple[tuple[Path, Path], ...]:
+    state = getattr(armature, "gbfr_cloth", None)
+    if state is None or not state.enabled:
+        return ()
+    bundle = resolve_model_bundle(minfo_path, workspace_json)
+    state.workspace_path = str(bundle.workspace_json)
+    state.minfo_path = str(bundle.minfo)
+    _canonicalize_cloth_bone_ids(
+        armature, state, exported_bone_names=exported_bone_names,
+    )
+    clp_by_id = {group.group_id: group for group in state.clp_groups}
+    clh_by_id = {layer.group_id: layer for layer in state.clh_layers}
+    staging_directory = Path(staging_directory)
+    staged = []
+    for index, record in enumerate(bundle.cloth_files):
+        destination = staging_directory / f"{index:03d}_{record.xml.name}"
+        if record.category == "clp":
+            group = clp_by_id.get(record.group_id)
+            if group is None:
+                continue
+            _save_clp_xml(
+                group, destination, template_path=record.xml, update_path=False,
+            )
+        else:
+            layer = clh_by_id.get(record.group_id)
+            if layer is None:
+                continue
+            _save_clh_xml(
+                layer, destination, template_path=record.xml, update_path=False,
+            )
+        staged.append((destination, record.xml))
+    return tuple(staged)
 
 
 def write_cloth_xml_to_workspace(

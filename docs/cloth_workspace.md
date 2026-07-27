@@ -7,7 +7,7 @@
 - `ModelFiles` 中同模型 ID 的 `.minfo`、`.skeleton` 和全部已登记的 `model_streaming/lod#`/`shadowlod#` `.mmesh`；导入层级为模型根对象、LOD 空对象、该 LOD 的一个或多个 Mesh；
 - `ClothFiles` 中全部基础 `*_clp.bxm.xml` 与 `*_clh.bxm.xml`。
 
-导入完成后，3D 视图右侧 `GBFR 工作区` 下提供三个互相独立的区域：`Cloth 预览` 只管理视口覆盖，`CLP 求解` 编辑求解组和节点，`CLH 碰撞` 编辑碰撞层和球/胶囊。它们只操作中控当前选择的 minfo 会话。视图开关绘制当前会话的静态数据：绿色为上下游骨骼链，紫色为由 `thick_` 决定的节点碰撞球，粉色为横向连接，橙色为 `noFix`，青色为 CLH 球/胶囊。节点与 CLH 的实际接触距离是两者半径之和。当前没有运行物理解算。
+导入完成后，3D 视图右侧 `GBFR 工作区` 下提供三个互相独立的区域：`Cloth 预览` 只管理视口覆盖，`CLP 求解` 编辑求解组和节点，`CLH 碰撞` 编辑碰撞层和球/胶囊。它们只操作中控当前选择的 minfo 会话。`ClothFiles` 会按路径和文件名前缀归属到完全一致的模型 ID；例如 `pl1400` 的 CLP/CLH 不会载入 `fp1400` 会话，未登记 cloth 的 FP 模型不会显示这些区域，也不会参与恢复或导出。视图开关绘制当前会话的静态数据：绿色为上下游骨骼链，紫色为由 `thick_` 决定的节点碰撞球，粉色为横向连接，橙色为 `noFix`，青色为 CLH 球/胶囊。节点与 CLH 的实际接触距离是两者半径之和。当前没有运行物理解算。
 
 CLP 列表会直接显示组 ID、节点数和引用的 CLH 层。选择组后，可在“求解组/节点”之间切换；组级 Header 每次只展开一个参数分类，节点属性按拓扑、运动、碰撞、风力与缩放、原始字段分类。CLH 列表显示每层碰撞体数量，碰撞体属性按形状、附着、状态和原始字段分类，添加与删除使用列表右侧的 `+/-`。这样切换对象时只显示当前任务所需字段，不再同时展开整个 CLP 和 CLH 数据树。
 
@@ -15,7 +15,7 @@ CLP 列表会直接显示组 ID、节点数和引用的 CLH 层。选择组后�
 
 `useCollisionFlags_` 显示为逐层的 CLH 开关，不再要求手算位掩码；CLH 的 `capsule` 显示为同层碰撞端点引用，留空表示球。已知 Header 与节点字段使用中文名称和用途提示，未完全确认的参数会明确标注。数据版本、原始骨骼编码、碰撞 ID 和位掩码仍可在“原始 Header”或各对象的“原始字段”分类中检查，以便研究和故障排查。
 
-工作区“导出到工作区”会一次性输出模型，并把当前会话的全部 CLP/CLH 写入目标 workspace 的 `unpack` XML。Blender 不调用 GBFRDataTools、不生成 BXM，也不写 `build`；build 统一交给 GBFR Modtools 预览器完成。写回基于目标 workspace 原 XML 树更新已知字段，未知节点和属性会保留。CLP 与 CLH 都允许创建和删除记录；空 CLP 会保留 Header 和组号并把节点数写为 0。
+工作区“导出到工作区”会一次性输出模型，并把当前会话的全部 CLP/CLH 写入目标 workspace 的 `unpack` XML。模型和 cloth 会先在临时目录全部生成并通过严格骨骼映射，再统一安装到 unpack，避免 cloth 失败后只留下已覆盖的模型文件。Blender 不生成 BXM，也不写 `build`；build 统一交给 GBFR Modtools 预览器完成。写回基于目标 workspace 原 XML 树更新已知字段，未知节点和属性会保留。CLP 与 CLH 都允许创建和删除记录；空 CLP 会保留 Header 和组号并把节点数写为 0。
 
 `Cloth 预览` 顶部的“恢复 source”会丢弃当前 Blender 会话中的全部 cloth 修改，并用 workspace 登记的原始 BXM 重新生成全部 CLP/CLH 的 `unpack` XML。插件先在临时目录完成整批解码、CLP/CLH 解析、`SourceSha256` 与 `BaselineSha256` 校验，全部通过后才覆盖 unpack 并重新载入；该操作不修改 `build`。旁边的“重载 unpack”只重新读取现有 XML，不会从 source 恢复。
 

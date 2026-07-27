@@ -110,7 +110,7 @@ def _atomic_install(source, target, temporary_files):
     temporary_files.append((temporary, target))
 
 
-def _install_workspace_export(staging_root, targets):
+def _install_workspace_export(staging_root, targets, extra_files=()):
     staging_root = Path(staging_root)
     model_directory = staging_root / "model" / targets.model_id[:2] / targets.model_id
     files = [
@@ -124,6 +124,7 @@ def _install_workspace_export(staging_root, targets):
             staging_root / "model_streaming" / stream_level / f"{targets.model_id}.mmesh",
             target,
         ))
+    files.extend(extra_files)
 
     temporary_files = []
     try:
@@ -294,7 +295,11 @@ class ExportSomeData(Operator, ImportHelper):
             box.label(text="实验模式：白名单优先 _xxx → _cxx → _axx → _dxx，只改名不改父子关系", icon="INFO")
         if self.fill_missing_lods:
             box.label(text="缺失的低精度 LOD 将在导出时使用 LOD0", icon="DUPLICATE")
-        box.label(text="当前会话的全部 CLP/CLH 将同时写入 unpack XML", icon="PHYSICS")
+        cloth_state = getattr(active_session_armature(context), "gbfr_cloth", None)
+        if cloth_state is not None and cloth_state.enabled:
+            box.label(text="当前会话的全部 CLP/CLH 将同时写入 unpack XML", icon="PHYSICS")
+        else:
+            box.label(text="当前模型未登记 CLP/CLH，不会写入 cloth", icon="INFO")
 
     def execute(self, context):
         from .gbfr_session import active_session_armature, active_session_collection, active_session_root
@@ -335,6 +340,7 @@ class ExportSomeData(Operator, ImportHelper):
             if self.fill_missing_lods:
                 filled_lods = _fill_missing_regular_lods(export_root, export_collection, targets)
 
+            cloth_count = 0
             with tempfile.TemporaryDirectory(prefix=f"gbfr_v2_{targets.model_id}_") as staging:
                 staging_root = Path(staging)
                 exported_bone_names = gbfr_model_export_v2.write_some_data(
@@ -346,15 +352,17 @@ class ExportSomeData(Operator, ImportHelper):
                     experimental_rename_new_bones=self.experimental_rename_new_bones,
                     preserve_reference_skeleton=targets.model_id.lower().startswith("fp"),
                 )
-                _install_workspace_export(staging_root, targets)
-
-            cloth_count = 0
-            if cloth_armature is not None:
-                from .gbfr_cloth_blender import write_cloth_xml_to_workspace
-                cloth_count = write_cloth_xml_to_workspace(
-                    cloth_armature, targets.minfo, targets.workspace_json,
-                    exported_bone_names=exported_bone_names,
+                staged_cloth = ()
+                if cloth_armature is not None:
+                    from .gbfr_cloth_blender import stage_cloth_xml_for_workspace
+                    staged_cloth = stage_cloth_xml_for_workspace(
+                        cloth_armature, targets.minfo, targets.workspace_json,
+                        staging_root / "cloth", exported_bone_names,
+                    )
+                _install_workspace_export(
+                    staging_root, targets, extra_files=staged_cloth,
                 )
+                cloth_count = len(staged_cloth)
 
             state.workspace_path = str(targets.workspace_json)
             state.resolved_minfo_path = str(targets.minfo)

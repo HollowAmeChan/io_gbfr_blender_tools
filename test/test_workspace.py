@@ -28,6 +28,10 @@ class WorkspaceTests(unittest.TestCase):
                 "source_mmesh": "source/data/model_streaming/lod0/pl9999.mmesh",
                 "source_mmesh_lod1": "source/data/model_streaming/lod1/pl9999.mmesh",
                 "source_mmesh_shadow": "source/data/model_streaming/shadowlod0/pl9999.mmesh",
+                "fp_minfo": "unpack/data/model/fp/fp9999/fp9999.minfo",
+                "source_fp_minfo": "source/data/model/fp/fp9999/fp9999.minfo",
+                "fp_mmesh": "unpack/data/model_streaming/lod0/fp9999.mmesh",
+                "source_fp_mmesh": "source/data/model_streaming/lod0/fp9999.mmesh",
                 "material": "unpack/data/model/pl/pl9999/vars/0.mmat.json",
                 "source_texture": "source/data/granite/2k/pl9999_body.dds",
                 "unpack_texture": "unpack/data/granite/2k/pl9999_body.dds",
@@ -46,6 +50,8 @@ class WorkspaceTests(unittest.TestCase):
                     {"FileType": "mmesh", "Input": paths["mmesh"], "Source": paths["source_mmesh"]},
                     {"FileType": "mmesh", "Input": paths["mmesh_shadow"], "Source": paths["source_mmesh_shadow"]},
                     {"FileType": "mmesh", "Input": paths["mmesh_lod1"], "Source": paths["source_mmesh_lod1"]},
+                    {"FileType": "minfo", "Input": paths["fp_minfo"], "Source": paths["source_fp_minfo"]},
+                    {"FileType": "mmesh", "Input": paths["fp_mmesh"], "Source": paths["source_fp_mmesh"]},
                 ],
                 "ClothFiles": [
                     {"Category": "clp", "GroupId": 0, "Xml": paths["clp"], "Source": "source/a.bxm", "Output": "build/a.bxm", "SourceSha256": "source-hash", "BaselineSha256": "xml-hash"},
@@ -78,6 +84,10 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual("xml-hash", clp.baseline_sha256)
             self.assertEqual(workspace_path, find_workspace_json(root / paths["minfo"]))
 
+            face_bundle = resolve_model_bundle(root / paths["source_fp_minfo"])
+            self.assertEqual("fp9999", face_bundle.model_id)
+            self.assertEqual((), face_bundle.cloth_files)
+
             targets = resolve_model_export_targets(workspace_path, "pl9999")
             self.assertEqual(root / paths["minfo"], targets.minfo)
             self.assertEqual(root / paths["skeleton"], targets.skeleton)
@@ -92,6 +102,32 @@ class WorkspaceTests(unittest.TestCase):
                 root / paths["minfo"], require_cloth_xml=False,
             )
             self.assertEqual(2, len(recovery_bundle.cloth_files))
+
+    def test_rejects_cloth_record_with_conflicting_model_owners(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            minfo = root / "source/data/model/pl/pl9999/pl9999.minfo"
+            mmesh = root / "source/data/model_streaming/lod0/pl9999.mmesh"
+            minfo.parent.mkdir(parents=True)
+            mmesh.parent.mkdir(parents=True)
+            minfo.write_bytes(b"fixture")
+            mmesh.write_bytes(b"fixture")
+            workspace = {
+                "Version": 1,
+                "ModelFiles": [
+                    {"FileType": "minfo", "Source": str(minfo.relative_to(root)), "Input": "unpack/pl9999.minfo"},
+                    {"FileType": "mmesh", "Source": str(mmesh.relative_to(root)), "Input": "unpack/pl9999.mmesh"},
+                ],
+                "ClothFiles": [{
+                    "Category": "clp", "GroupId": 0,
+                    "Source": "source/data/pl/pl9999/cloth/pl9999_0_0_clp.bxm",
+                    "Xml": "unpack/data/pl/pl8888/cloth/pl8888_0_0_clp.bxm.xml",
+                    "Output": "build/data/pl/pl9999/cloth/pl9999_0_0_clp.bxm",
+                }],
+            }
+            (root / "workspace.json").write_text(json.dumps(workspace), encoding="utf-8")
+            with self.assertRaisesRegex(WorkspaceError, "属于不同模型"):
+                resolve_model_bundle(minfo, require_cloth_xml=False)
 
     def test_rejects_unregistered_minfo(self):
         with tempfile.TemporaryDirectory() as temporary:

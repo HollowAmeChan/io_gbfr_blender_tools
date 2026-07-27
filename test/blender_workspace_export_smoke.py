@@ -136,15 +136,17 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
     cloth_state = session_root.gbfr_cloth
     test_group = next(group for group in cloth_state.clp_groups if group.nodes)
     test_node = next(node for node in test_group.nodes if node.bone_ref)
-    opaque_group = next(
+    opaque_group = next((
         group for group in cloth_state.clp_groups
         if any(not node.bone_ref for node in group.nodes)
-    )
-    opaque_node = next(node for node in opaque_group.nodes if not node.bone_ref)
-    opaque_signature = (
-        int(opaque_node.bone), int(opaque_node.up), int(opaque_node.down),
-        int(opaque_node.side), int(opaque_node.poly), int(opaque_node.fix),
-    )
+    ), None)
+    opaque_signature = None
+    if opaque_group is not None:
+        opaque_node = next(node for node in opaque_group.nodes if not node.bone_ref)
+        opaque_signature = (
+            int(opaque_node.bone), int(opaque_node.up), int(opaque_node.down),
+            int(opaque_node.side), int(opaque_node.poly), int(opaque_node.fix),
+        )
     test_node.friction += 0.123456
     expected_friction = test_node.friction
     expected_export_name = export_bone_name(session_root.data.bones[test_node.bone_ref])
@@ -184,15 +186,16 @@ with tempfile.TemporaryDirectory(prefix="export_smoke_", dir=temporary_parent) a
         node.bone == expected_bone_id and node.bone_ref
         for node in test_group.nodes
     )
-    opaque_clp_record = next(
-        record for record in cloth_records
-        if record["Category"] == "clp" and record["GroupId"] == opaque_group.group_id
-    )
-    exported_opaque_clp = load_clp(root / opaque_clp_record["Xml"])
-    assert any(
-        (node.bone, node.up, node.down, node.side, node.poly, node.fix) == opaque_signature
-        for node in exported_opaque_clp.nodes
-    )
+    if opaque_group is not None:
+        opaque_clp_record = next(
+            record for record in cloth_records
+            if record["Category"] == "clp" and record["GroupId"] == opaque_group.group_id
+        )
+        exported_opaque_clp = load_clp(root / opaque_clp_record["Xml"])
+        assert any(
+            (node.bone, node.up, node.down, node.side, node.poly, node.fix) == opaque_signature
+            for node in exported_opaque_clp.nodes
+        )
     assert not (root / target_clp_record["Output"]).exists()
     assert f"{len(cloth_records)} 个 Cloth XML" in session.gbfr_session.last_status
 

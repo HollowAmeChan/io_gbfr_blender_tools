@@ -141,6 +141,28 @@ def _stream_record_order(record: dict) -> tuple[int, int, str]:
     return (2, 0, value.casefold())
 
 
+def _cloth_record_model_id(record: dict) -> str | None:
+    owners = set()
+    for key in ("Xml", "Source", "Output"):
+        value = str(record.get(key) or "").replace("\\", "/")
+        if not value:
+            continue
+        parts = [part for part in value.split("/") if part]
+        for index, part in enumerate(parts):
+            if part.casefold() == "cloth" and index > 0:
+                candidate = parts[index - 1]
+                if re.fullmatch(r"[a-zA-Z]{2}\d{4}", candidate):
+                    owners.add(candidate.casefold())
+        match = re.match(r"([a-zA-Z]{2}\d{4})(?:_|$)", Path(value).name)
+        if match is not None:
+            owners.add(match.group(1).casefold())
+    if len(owners) > 1:
+        raise WorkspaceError(
+            "cloth 记录的 Source/Xml/Output 属于不同模型: " + ", ".join(sorted(owners))
+        )
+    return next(iter(owners), None)
+
+
 def _find_mmesh_records(records: list[dict], model_id: str) -> list[dict]:
     matches = [
         record for record in records
@@ -288,6 +310,9 @@ def resolve_model_bundle(
     for record in document.get("ClothFiles") or []:
         category = str(record.get("Category") or "").casefold()
         if category not in {"clp", "clh"}:
+            continue
+        owner_model_id = _cloth_record_model_id(record)
+        if owner_model_id is not None and owner_model_id != model_id.casefold():
             continue
         xml = _asset_path(root, record.get("Xml"))
         source = _asset_path(root, record.get("Source"))

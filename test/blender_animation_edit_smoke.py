@@ -26,6 +26,9 @@ from io_gbfr_blender_tools.gbfr_session import active_session_armature
 armature = active_session_armature(bpy.context)
 assert armature is not None
 state = armature.gbfr_animation
+assert not armature.gbfr_cloth.enabled
+assert len(armature.gbfr_cloth.clp_groups) == 0
+assert len(armature.gbfr_cloth.clh_layers) == 0
 annotations = {
     item.display_name: item.guessed_annotation for item in state.animations
 }
