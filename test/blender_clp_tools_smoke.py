@@ -18,9 +18,10 @@ assert bpy.ops.gbfr.import_mesh(filepath=str(minfo), import_scale=1.0) == {"FINI
 from io_gbfr_blender_tools.Entities.ModelSkeleton import ModelSkeleton
 from io_gbfr_blender_tools.gbfr_bone_selection import selected_bone_names
 from io_gbfr_blender_tools.gbfr_cloth_blender import (
-    _canonicalize_cloth_bone_ids, _export_bone_ids,
+    _canonicalize_cloth_bone_ids, _export_bone_ids, clp_encoded_name_reference_groups,
 )
 from io_gbfr_blender_tools.gbfr_cloth_format import ClpNode, MISSING_BONE
+from io_gbfr_blender_tools.gbfr_export import _draw_clp_encoded_name_warnings
 from io_gbfr_blender_tools.gbfr_model_export_v2 import (
     appended_bone_export_name_map,
     rename_new_bones_for_experimental_export,
@@ -37,6 +38,40 @@ assert create_rna.properties["apply_header"].default is False
 assert create_rna.properties["apply_header"].name == "覆盖物理参数"
 targets = resolve_model_export_targets(state.workspace_path, state.model_id)
 source_skeleton = ModelSkeleton.GetRootAs(bytearray(targets.reference_skeleton.read_bytes()), 0)
+
+encoded_references = clp_encoded_name_reference_groups(armature)
+assert "_900" not in encoded_references
+probe_group = next(group for group in state.clp_groups if group.group_id == 3 and group.nodes)
+probe_node = probe_group.nodes[0]
+old_fix, old_fix_ref = int(probe_node.fix), str(probe_node.fix_ref)
+probe_node.suspend_reference_updates = True
+probe_node.fix, probe_node.fix_ref = 0x900, "_900"
+probe_node.suspend_reference_updates = False
+assert clp_encoded_name_reference_groups(armature)["_900"] == (3,)
+
+class LayoutProbe:
+    def __init__(self):
+        self.alert = False
+        self.children = []
+        self.labels = []
+
+    def box(self):
+        child = LayoutProbe()
+        self.children.append(child)
+        return child
+
+    def label(self, *, text, icon=None):
+        self.labels.append((text, icon))
+
+
+layout_probe = LayoutProbe()
+drawn_warnings = _draw_clp_encoded_name_warnings(layout_probe, armature)
+assert drawn_warnings["_900"] == (3,)
+assert layout_probe.children and layout_probe.children[0].alert is True
+assert any("_900" in text for text, _icon in layout_probe.children[0].labels)
+probe_node.suspend_reference_updates = True
+probe_node.fix, probe_node.fix_ref = old_fix, old_fix_ref
+probe_node.suspend_reference_updates = False
 
 bpy.context.view_layer.objects.active = armature
 armature.select_set(True)

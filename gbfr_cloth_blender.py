@@ -78,6 +78,26 @@ def _bone_display(armature, bone_id: int) -> str:
     return actual_name or raw_name
 
 
+def clp_encoded_name_reference_groups(armature) -> dict[str, tuple[int, ...]]:
+    """Return live CLP references whose current Blender bone name is `_xxx`."""
+    state = getattr(armature, "gbfr_cloth", None) if armature else None
+    if state is None:
+        return {}
+    groups_by_name: dict[str, set[int]] = {}
+    for group in state.clp_groups:
+        for node in group.nodes:
+            for raw_attr in ("bone", "up", "down", "side", "poly", "fix"):
+                reference = str(getattr(node, raw_attr + "_ref", "") or "")
+                bone = armature.data.bones.get(reference) if reference else None
+                if bone is None or re.fullmatch(r"_[0-9a-fA-F]{3}", bone.name) is None:
+                    continue
+                groups_by_name.setdefault(bone.name, set()).add(int(group.group_id))
+    return {
+        name: tuple(sorted(group_ids))
+        for name, group_ids in sorted(groups_by_name.items())
+    }
+
+
 def _property_armature(owner):
     value = getattr(owner, "id_data", None)
     return value if isinstance(value, bpy.types.Object) and value.type == "ARMATURE" else None

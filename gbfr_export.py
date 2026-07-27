@@ -197,6 +197,33 @@ def _validate_skeleton_contract(root, reference_path, preserve_reference_skeleto
         )
 
 
+def _draw_clp_encoded_name_warnings(layout, armature):
+    if armature is None:
+        return {}
+    from .gbfr_cloth_blender import clp_encoded_name_reference_groups
+    warnings = clp_encoded_name_reference_groups(armature)
+    if not warnings:
+        return warnings
+
+    warning = layout.box()
+    warning.alert = True
+    warning.label(
+        text=f"CLP 引用了 {len(warnings)} 根当前仍名为 _xxx 的骨骼",
+        icon="ERROR",
+    )
+    warning.label(text="请确认其中没有 Root、身体或其他动画主骨")
+    names_by_group = {}
+    for name, group_ids in warnings.items():
+        for group_id in group_ids:
+            names_by_group.setdefault(group_id, []).append(name)
+    for group_id in sorted(names_by_group):
+        names = sorted(names_by_group[group_id])
+        for offset in range(0, len(names), 8):
+            prefix = f"CLP {group_id}: " if offset == 0 else ""
+            warning.label(text=prefix + ", ".join(names[offset:offset + 8]))
+    return warnings
+
+
 class ExportSomeData(Operator, ImportHelper):
     """Export the active minfo session to workspace unpack."""
 
@@ -237,7 +264,7 @@ class ExportSomeData(Operator, ImportHelper):
         layout.prop(self, "fill_missing_lods")
         layout.prop(self, "strict_skeleton_contract")
         layout.prop(self, "experimental_rename_new_bones")
-        from .gbfr_session import active_session_collection
+        from .gbfr_session import active_session_armature, active_session_collection
         collection = active_session_collection(context)
         box = layout.box()
         if collection is None:
@@ -245,6 +272,7 @@ class ExportSomeData(Operator, ImportHelper):
             return
         state = collection.gbfr_session
         box.label(text=f"当前模型: {state.model_id}", icon="FILE_3D")
+        _draw_clp_encoded_name_warnings(layout, active_session_armature(context))
         try:
             targets = resolve_model_export_targets(self.filepath, state.model_id)
         except Exception as error:
