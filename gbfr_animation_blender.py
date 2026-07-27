@@ -1026,7 +1026,7 @@ class GBFR_UL_Animations(UIList):
         if annotation:
             display_name += f"  [推测：{annotation}]"
         row.label(text=display_name, icon="CHECKMARK" if active else "ACTION")
-        row.label(text=f"{item.frame_count}f")
+        row.label(text=f"{item.frame_count}帧")
         if action is None:
             operator = row.operator("gbfr.animation_import_action", text="", icon="IMPORT")
             operator.animation_index = index
@@ -1093,7 +1093,7 @@ class GBFR_PT_AnimationPreview(Panel):
             annotation = _entry_annotation(item)
             details = layout.row(align=True)
             details.label(text=item.internal_name or item.display_name, icon="ACTION")
-            details.label(text=f"{item.frame_count}f · {item.track_count}轨")
+            details.label(text=f"{item.frame_count}帧 · {item.track_count}轨")
             if annotation:
                 layout.label(
                     text=f"文件名推测：{annotation}", icon="QUESTION",
