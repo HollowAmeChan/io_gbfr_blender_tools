@@ -19,7 +19,8 @@ from mathutils import Vector
 
 from .gbfr_cloth_format import (
     CLP_HEADER_FLOATS, CLP_HEADER_INTS, ClhCollision, ClhDocument,
-    ClpDocument, ClpNode, MISSING_BONE, load_clh, load_clp, write_clh, write_clp,
+    ClpDocument, ClpNode, MISSING_BONE, load_clh, load_clp,
+    restore_cloth_xml_from_source, write_clh, write_clp,
 )
 from .gbfr_cloth_tools import (
     PRESETS, SelectedBone, count_nonreciprocal_up_links, generate_nodes, preset, rebuild_nodes,
@@ -1230,6 +1231,46 @@ class GBFR_OT_ClpRemoveActiveNode(Operator):
         return {"FINISHED"}
 
 
+class GBFR_OT_ClothRestoreSource(Operator):
+    bl_idname = "gbfr.cloth_restore_source"
+    bl_label = "从 source 恢复 CLP/CLH"
+    bl_description = "用 workspace 登记的原始 BXM 覆盖全部 unpack cloth XML，并重新载入"
+
+    def invoke(self, context, _event):
+        armature = _armature(context)
+        if armature is None or not armature.gbfr_cloth.enabled:
+            return {"CANCELLED"}
+        return context.window_manager.invoke_props_dialog(self, width=480)
+
+    def draw(self, _context):
+        layout = self.layout
+        layout.label(text="将放弃 Blender 中尚未导出的全部 CLP/CLH 修改。", icon="ERROR")
+        layout.label(text="unpack cloth XML 会由 source BXM 重新生成；build 不受影响。")
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_cloth
+        try:
+            bundle = resolve_model_bundle(
+                state.minfo_path,
+                state.workspace_path or None,
+                require_cloth_xml=False,
+            )
+            count = restore_cloth_xml_from_source(
+                bundle.cloth_files, bundle.workspace_root,
+            )
+            populate_cloth_state(armature, bundle)
+            state.last_status = f"已从 source 恢复并重新载入 {count} 个 CLP/CLH"
+            self.report({"INFO"}, state.last_status)
+            return {"FINISHED"}
+        except Exception as error:
+            state.last_status = str(error)
+            self.report({"ERROR"}, state.last_status)
+            return {"CANCELLED"}
+
+
 class GBFR_OT_ClpCleanInvalidReferences(Operator):
     bl_idname = "gbfr.clp_clean_invalid_references"
     bl_label = "检查并清理无效 CLP"
@@ -1501,6 +1542,9 @@ class GBFR_PT_ClothEditor(Panel):
         summary = layout.row(align=True)
         summary.label(text=f"{len(state.clp_groups)} CLP", icon="CONSTRAINT_BONE")
         summary.label(text=f"{len(state.clh_layers)} CLH", icon="MESH_UVSPHERE")
+        actions = layout.row(align=True)
+        actions.operator("gbfr.cloth_reload", text="重载 unpack", icon="FILE_REFRESH")
+        actions.operator("gbfr.cloth_restore_source", text="恢复 source", icon="LOOP_BACK")
         layout.label(text="视口显示")
         row = layout.row(align=True)
         row.prop(state, "show_topology", text="骨骼链", toggle=True, icon="CONSTRAINT_BONE")
@@ -1873,6 +1917,7 @@ def _draw_overlay():
 classes = (
     GBFRClpNodeProperties, GBFRClpGroupProperties, GBFRClhCollisionProperties,
     GBFRClhLayerProperties, GBFRClothStateProperties, GBFR_OT_ClothReload,
+    GBFR_OT_ClothRestoreSource,
     GBFR_OT_ClpCreateFromSelection,
     GBFR_OT_ClpDeleteSelection, GBFR_OT_ClpRemoveActiveNode,
     GBFR_OT_ClpCleanInvalidReferences,

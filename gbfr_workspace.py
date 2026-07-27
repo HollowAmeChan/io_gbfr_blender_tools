@@ -19,6 +19,8 @@ class ClothFileRecord:
     source: Path
     xml: Path
     output: Path
+    source_sha256: str = ""
+    baseline_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -197,7 +199,12 @@ def resolve_model_export_targets(workspace_json: str | Path, model_id: str) -> M
     )
 
 
-def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | None = None) -> ModelBundle:
+def resolve_model_bundle(
+    minfo_path: str | Path,
+    workspace_json: str | Path | None = None,
+    *,
+    require_cloth_xml: bool = True,
+) -> ModelBundle:
     selected = Path(minfo_path).expanduser().resolve()
     if selected.suffix.casefold() != ".minfo" or not selected.is_file():
         raise WorkspaceError(f"请选择存在的 .minfo 文件: {selected}")
@@ -285,7 +292,7 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         xml = _asset_path(root, record.get("Xml"))
         source = _asset_path(root, record.get("Source"))
         output = _asset_path(root, record.get("Output"))
-        if not xml.is_file():
+        if require_cloth_xml and not xml.is_file():
             raise WorkspaceError(f"cloth 中间态不存在: {xml}")
         cloth_files.append(ClothFileRecord(
             category=category,
@@ -293,6 +300,8 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
             source=source.resolve(),
             xml=xml.resolve(),
             output=output.resolve(),
+            source_sha256=str(record.get("SourceSha256") or ""),
+            baseline_sha256=str(record.get("BaselineSha256") or ""),
         ))
     cloth_files.sort(key=lambda item: (item.category, item.group_id, item.xml.name.casefold()))
 

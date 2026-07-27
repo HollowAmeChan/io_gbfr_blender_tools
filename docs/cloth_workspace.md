@@ -17,6 +17,8 @@ CLP 列表会直接显示组 ID、节点数和引用的 CLH 层。选择组后�
 
 工作区“导出到工作区”会一次性输出模型，并把当前会话的全部 CLP/CLH 写入目标 workspace 的 `unpack` XML。Blender 不调用 GBFRDataTools、不生成 BXM，也不写 `build`；build 统一交给 GBFR Modtools 预览器完成。写回基于目标 workspace 原 XML 树更新已知字段，未知节点和属性会保留。CLP 与 CLH 都允许创建和删除记录；空 CLP 会保留 Header 和组号并把节点数写为 0。
 
+`Cloth 预览` 顶部的“恢复 source”会丢弃当前 Blender 会话中的全部 cloth 修改，并用 workspace 登记的原始 BXM 重新生成全部 CLP/CLH 的 `unpack` XML。插件先在临时目录完成整批解码、CLP/CLH 解析、`SourceSha256` 与 `BaselineSha256` 校验，全部通过后才覆盖 unpack 并重新载入；该操作不修改 `build`。旁边的“重载 unpack”只重新读取现有 XML，不会从 source 恢复。
+
 半隐式 CLP 创建与删除位于顶级 `GBFR 实用工具 > CLP 创建工具`，不会在上面的 `Cloth 预览`、`CLP 求解` 和 `CLH 碰撞` 区域增加操作按钮。常驻面板只显示当前 CLP 和操作按钮；点击“添加所选”或“替换当前组”后，弹窗才集中显示本次创建使用的节点预设、连接方式和闭合选项：
 
 - 选择多串骨链后，“添加所选”或“替换当前组”会按真实父子层级计算深度，按 root 骨名排序横向顺序，并把预设曲线立即烘焙为普通可编辑节点。
@@ -31,7 +33,7 @@ CLP 列表会直接显示组 ID、节点数和引用的 CLH 层。选择组后�
 - 新增骨的 CLP 编号复用模型导出器的 source skeleton 与实验白名单分配器，和模型导出临时副本得到相同 `_xxx` 名称。若模型导出时关闭“实验：新增骨骼使用白名单编号”，新节点将无法与模型骨架一致。
 
 联合导出时，模型导出器会把本次实际采用的最终骨名映射交给 Cloth 写出阶段。CLP 的 `no/noUp/noDown/noSide/noPoly/noFix` 与 CLH 的 `p1/p2` 会在写 XML 前按精确骨骼引用重编码；面板中的旧整数不再直接作为可解析记录的最终依据。引用存在但未进入最终骨架时导出会明确失败，同一 CLP 重编码后出现的同骨重复节点会合并。原游戏 CLP/CLH 中还存在大量不属于当前模型 skeleton、也没有 Blender 骨骼引用的物理专用编号；这些编号不能靠显示名猜测，联合导出会把它们作为不透明原始数据原样保留。
-这些操作只修改 Blender 内存中的当前 CLP，支持 Undo。确认连接和参数后随模型一起“导出到工作区”；不满意时也可以重新载入 `unpack`，或在 GBFR Modtools 中从 source 恢复单个 CLP。
+这些操作只修改 Blender 内存中的当前 CLP，支持 Undo。确认连接和参数后随模型一起“导出到工作区”；不满意时可以重新载入 `unpack`，在 Blender 中从 source 恢复当前模型的全部 CLP/CLH，或在 GBFR Modtools 中恢复单个文件。
 
 实现注意：复制现有 `CLOTH_WK` 或 CLH 碰撞记录时，必须先把 Blender RNA 的向量属性转换为普通 tuple，再清空并重建 `CollectionProperty`。RNA 数组是对原集合存储的动态引用；直接保存在临时数据类中会在 `clear()` 后失效，导致追加新链时改坏其他节点的 `offset`。真实 `pl1400` 烟测会在独立链追加前后逐字段比较全部旧节点，并检查新引用不越过本次选择。
 

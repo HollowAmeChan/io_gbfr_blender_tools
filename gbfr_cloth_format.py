@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
+import hashlib
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 
@@ -159,6 +162,120 @@ def load_clh(path: str | Path) -> ClhDocument:
             disabled_in_idle=bool(_int(item, "notUseInIdle")),
         ))
     return ClhDocument(path=path, collisions=collisions)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def locate_gbfr_data_tools(workspace_root: str | Path) -> Path:
+    workspace_root = Path(workspace_root).expanduser().resolve()
+    relative = Path("_lib/tools/GBFRDataTools/GBFRDataTools.exe")
+    candidates = []
+    for root in (workspace_root, *workspace_root.parents):
+        candidates.extend((root / relative, root / "GBFR_modtools" / relative))
+    executable = shutil.which("GBFRDataTools") or shutil.which("GBFRDataTools.exe")
+    if executable:
+        candidates.append(Path(executable))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    raise FileNotFoundError(
+        "找不到 GBFRDataTools.exe；请保留 GBFR_modtools/_lib/tools/GBFRDataTools 工具目录"
+    )
+
+
+def _atomic_copy(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(
+        prefix=destination.name + ".", suffix=".tmp", dir=destination.parent,
+    )
+    os.close(handle)
+    try:
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, destination)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def restore_cloth_xml_from_source(
+    records,
+    workspace_root: str | Path,
+    data_tools: str | Path | None = None,
+) -> int:
+    """Decode and validate a complete cloth set before replacing unpack XML."""
+    records = tuple(records)
+    if not records:
+        raise ValueError("当前模型没有登记 CLP/CLH")
+    tool = (
+        Path(data_tools).expanduser().resolve()
+        if data_tools is not None
+        else locate_gbfr_data_tools(workspace_root)
+    )
+    if not tool.is_file():
+        raise FileNotFoundError(f"GBFRDataTools.exe 不存在: {tool}")
+
+    with tempfile.TemporaryDirectory(prefix="gbfr_cloth_restore_") as temporary:
+        staging = Path(temporary)
+        decoded_files = []
+        for index, record in enumerate(records):
+            source = Path(record.source).expanduser().resolve()
+            destination = Path(record.xml).expanduser().resolve()
+            if not source.is_file():
+                raise FileNotFoundError(f"cloth source 不存在: {source}")
+            expected_source = str(getattr(record, "source_sha256", "") or "").casefold()
+            if expected_source and _file_sha256(source).casefold() != expected_source:
+                raise ValueError(f"cloth source 已改变，拒绝恢复: {source.name}")
+
+            decoded = staging / f"{index:03d}_{destination.name}"
+            result = subprocess.run(
+                [str(tool), "bxm-to-xml", "-i", str(source), "-o", str(decoded)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "未知错误").strip()
+                raise RuntimeError(f"{source.name} 解码失败: {detail}")
+            if not decoded.is_file() or decoded.stat().st_size == 0:
+                raise RuntimeError(f"GBFRDataTools 未生成 {destination.name}")
+            if record.category == "clp":
+                load_clp(decoded)
+            elif record.category == "clh":
+                load_clh(decoded)
+            else:
+                raise ValueError(f"不支持的 cloth 类型: {record.category}")
+            expected_xml = str(getattr(record, "baseline_sha256", "") or "").casefold()
+            if expected_xml and _file_sha256(decoded).casefold() != expected_xml:
+                raise ValueError(f"{source.name} 解码结果与 workspace 基线不一致")
+            decoded_files.append((decoded, destination))
+
+        backup_root = staging / "backup"
+        backup_root.mkdir()
+        installed = []
+        try:
+            for index, (decoded, destination) in enumerate(decoded_files):
+                backup = backup_root / f"{index:03d}_{destination.name}"
+                existed = destination.is_file()
+                if existed:
+                    shutil.copy2(destination, backup)
+                _atomic_copy(decoded, destination)
+                installed.append((destination, backup, existed))
+        except Exception:
+            for destination, backup, existed in reversed(installed):
+                if existed:
+                    _atomic_copy(backup, destination)
+                else:
+                    destination.unlink(missing_ok=True)
+            raise
+    return len(records)
 
 
 def _set(parent: ET.Element, name: str, value: str) -> None:

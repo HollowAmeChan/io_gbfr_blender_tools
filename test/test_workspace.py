@@ -48,7 +48,7 @@ class WorkspaceTests(unittest.TestCase):
                     {"FileType": "mmesh", "Input": paths["mmesh_lod1"], "Source": paths["source_mmesh_lod1"]},
                 ],
                 "ClothFiles": [
-                    {"Category": "clp", "GroupId": 0, "Xml": paths["clp"], "Source": "source/a.bxm", "Output": "build/a.bxm"},
+                    {"Category": "clp", "GroupId": 0, "Xml": paths["clp"], "Source": "source/a.bxm", "Output": "build/a.bxm", "SourceSha256": "source-hash", "BaselineSha256": "xml-hash"},
                     {"Category": "clh", "GroupId": 1, "Xml": paths["clh"], "Source": "source/b.bxm", "Output": "build/b.bxm"},
                 ],
             }
@@ -73,6 +73,9 @@ class WorkspaceTests(unittest.TestCase):
             unpack_bundle = resolve_model_bundle(root / paths["minfo"])
             self.assertEqual(root / paths["unpack_mot"], unpack_bundle.animations[0].preview)
             self.assertEqual([("clh", 1), ("clp", 0)], [(item.category, item.group_id) for item in bundle.cloth_files])
+            clp = next(item for item in bundle.cloth_files if item.category == "clp")
+            self.assertEqual("source-hash", clp.source_sha256)
+            self.assertEqual("xml-hash", clp.baseline_sha256)
             self.assertEqual(workspace_path, find_workspace_json(root / paths["minfo"]))
 
             targets = resolve_model_export_targets(workspace_path, "pl9999")
@@ -81,6 +84,14 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(root / paths["source_skeleton"], targets.reference_skeleton)
             self.assertEqual(root / paths["mmesh"], targets.mmesh)
             self.assertEqual(tuple(root / paths[name] for name in ("mmesh", "mmesh_lod1", "mmesh_shadow")), targets.mmeshes)
+
+            (root / paths["clp"]).unlink()
+            with self.assertRaises(WorkspaceError):
+                resolve_model_bundle(root / paths["minfo"])
+            recovery_bundle = resolve_model_bundle(
+                root / paths["minfo"], require_cloth_xml=False,
+            )
+            self.assertEqual(2, len(recovery_bundle.cloth_files))
 
     def test_rejects_unregistered_minfo(self):
         with tempfile.TemporaryDirectory() as temporary:
