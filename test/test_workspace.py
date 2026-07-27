@@ -19,6 +19,7 @@ class WorkspaceTests(unittest.TestCase):
                 "source_minfo": "source/data/model/pl/pl9999/pl9999.minfo",
                 "sop": "source/data/model/pl/pl9999/pl9999.sop",
                 "mot": "source/data/pl/pl9999/pl9999_0001.mot",
+                "unpack_mot": "unpack/data/pl/pl9999/pl9999_0001.mot",
                 "skeleton": "unpack/data/model/pl/pl9999/pl9999.skeleton",
                 "source_skeleton": "source/data/model/pl/pl9999/pl9999.skeleton",
                 "mmesh": "unpack/data/model_streaming/lod0/pl9999.mmesh",
@@ -63,7 +64,14 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(root / paths["source_texture"], resolve_albedo_texture(bundle.texture_roots, "pl9999_body"))
             self.assertEqual(root / paths["material"], bundle.material_json)
             self.assertEqual(root / paths["sop"], bundle.sop)
-            self.assertEqual((root / paths["mot"],), bundle.animations)
+            self.assertEqual(1, len(bundle.animations))
+            animation = bundle.animations[0]
+            self.assertEqual("pl9999_0001.mot", animation.name)
+            self.assertEqual(root / paths["mot"], animation.source)
+            self.assertEqual(root / paths["unpack_mot"], animation.unpack)
+            self.assertEqual(root / paths["mot"], animation.preview)
+            unpack_bundle = resolve_model_bundle(root / paths["minfo"])
+            self.assertEqual(root / paths["unpack_mot"], unpack_bundle.animations[0].preview)
             self.assertEqual([("clh", 1), ("clp", 0)], [(item.category, item.group_id) for item in bundle.cloth_files])
             self.assertEqual(workspace_path, find_workspace_json(root / paths["minfo"]))
 

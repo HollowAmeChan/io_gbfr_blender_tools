@@ -1,6 +1,6 @@
 # MOT 动画制作与编辑
 
-本文档面向 GBFR 的骨骼动画制作，当前优先目标是 `fpXXXX` 面部模型的表情 MOT。现有插件已经可以索引和预览 MOT，但还没有把 MOT 转换为 Blender Action，也不能写回 MOT。下文先说明当前可安全进行的骨架整理，再定义第一版编辑器的工作方式。
+本文档面向 GBFR 的骨骼动画制作，当前优先目标是 `fpXXXX` 面部模型的表情 MOT。插件可以按需把多条 MOT 转换为 Blender Action，使用单层 NLA Edit 修改，并逐条写回 unpack。下文先说明可安全进行的骨架整理，再说明第一版编辑器的工作方式和边界。
 
 ## 制作前整理面部骨骼
 
@@ -25,20 +25,18 @@ for bone in bpy.context.object.data.edit_bones:
 
 这会把所选骨骼缩短到 25%。不要选择整根骨后围绕公共中心缩放，因为那可能同时移动 `head`。
 
-## 当前 MOT 预览能力
+## MOT 预览与 Action 编辑
 
 导入面部模型 `.minfo` 后，`GBFR > MOT 动画` 会索引 `source/data/fp/fpXXXX` 或 `unpack/data/fp/fpXXXX` 中的同模型 MOT。点击列表条目后，插件按 60 FPS 在内存中采样，并直接更新 PoseBone `matrix_basis`。
 
-当前限制：
+源文件预览仍有以下限制：
 
 - 预览不会创建 Action、关键帧、Animation Slot 或 NLA Track。
-- 在预览状态下手工插入的 Pose 关键帧不是当前 MOT 的可写回副本。
+- 在源预览状态下手工插入的 Pose 关键帧不是当前 MOT 的可写回副本；需要先点击该行的“导入 Action”。
 - “停止并恢复静止姿态”会清除内存剪辑并恢复 rest pose。
 - 模型的“导出到工作区”不会修改或导出 MOT。
 
-因此，在编辑功能完成前，只能把现有 MOT 当作只读动作参考。
-
-编辑器完成后，源 MOT 预览与 Action 编辑仍必须保持会话级互斥。当前会话没有任何已导入 Action 时，列表下方沿用现有源 MOT 播放；一旦导入第一个 Action，插件立即停止源预览、清除内存剪辑并恢复静止姿态，随后禁用旧的源文件播放路径。只要会话仍保留任意 MOT Action，播放按钮就只驱动 Blender 时间轴和当前 Action/NLA，不能再次让帧回调直接覆盖 `matrix_basis`。删除会话中的全部 MOT Action 后，源 MOT 预览才重新启用。
+源 MOT 预览与 Action 编辑保持会话级互斥。当前会话没有任何已导入 Action 时，列表下方沿用源 MOT 播放；一旦导入第一个 Action，插件立即停止源预览、清除内存剪辑并恢复静止姿态，随后禁用旧的源文件播放路径。只要会话仍保留任意 MOT Action，播放按钮就只驱动 Blender 时间轴和当前 Action/NLA，不能再次让帧回调直接覆盖 `matrix_basis`。删除会话中的全部 MOT Action 后，源 MOT 预览才重新启用。
 
 ## 已确认的 MOT 通道
 
@@ -90,7 +88,7 @@ MOT 动画资产
     unpack MOT 路径
     Base Action
     可选 Edit Action
-    已修改 / 已验证 / 已导出状态
+    验证 / 导出状态
 ```
 
 切换动画时，插件先保存当前 Base/Edit 关联，再解除当前 NLA Stack，最后绑定目标动画及其帧范围。切换不会删除其他动画的 Action 或编辑层。
@@ -99,23 +97,26 @@ MOT 动画资产
 
 MOT 保存的是相对父骨的绝对局部变换，Blender Action 编辑的是相对 rest pose 的 PoseBone 变换。两者不能直接复制数值。
 
-载入 Action 时，每一帧执行：
+载入 Action 时，每一帧先执行：
 
 ```text
 MOT 位置/欧拉旋转/缩放
     -> animated_local_matrix
     -> inverse(rest_local_matrix) @ animated_local_matrix
-    -> PoseBone location/rotation/scale
+    -> 最接近的 PoseBone location/rotation/scale（TRS 投影）
 ```
 
-导出 MOT 时执行反向转换：
+某些源骨的非均匀缩放与旋转组合会让 `inverse(rest) @ animated` 带有剪切分量。Blender 普通 Action 只有 Location、Rotation、Scale，不能逐项表示剪切矩阵。插件会记录精确源矩阵，Action 只显示可编辑的最近 TRS 投影；导出时计算“当前 Action 相对原 TRS 投影的修改量”，再把该修改量叠加到精确源矩阵：
 
 ```text
-rest_local_matrix @ pose_basis_matrix
+exact_source_basis @ inverse(source_trs_projection) @ edited_pose_basis
+    -> rest_local_matrix @ corrected_basis
     -> MOT 位置/XYZ 欧拉旋转/缩放
 ```
 
-第一版将当前模板涉及的骨骼逐帧烘焙到 Action。原因是 rest 旋转参与矩阵换算后，MOT 单轴 Hermite 曲线通常不能无损地直接映射为 Blender 的单轴 F-Curve。逐帧烘焙更占内存，但能保证 Blender 中看到的每个整数帧与现有预览一致。
+这样未修改 Action 写回时不会把 Blender TRS 投影误差污染到 MOT；用户修改则以相对差值写回。验证状态会分别显示 Action 对 TRS 投影的误差和源矩阵本身的 TRS 投影误差。后者不等于 Action 损坏。
+
+第一版将当前模板涉及的骨骼逐帧烘焙到 Action。原因是 rest 旋转参与矩阵换算后，MOT 单轴 Hermite 曲线通常不能无损地直接映射为 Blender 的单轴 F-Curve。逐帧烘焙更占内存，但能保证除上述不可表达剪切外，Blender 中的每个整数帧与源预览一致，并保证未编辑文件的 MOT 采样往返一致。
 
 导出时也按整数帧采样：
 
@@ -134,10 +135,10 @@ rest_local_matrix @ pose_basis_matrix
 
 第一版不允许增加或删除轨道，也不允许改变目标骨号。这样可以先绕开未知轨道标志和不同角色通道集合的风险。用户可以让原常量轨道变为动画轨道，但不能给模板中不存在的骨骼新增 MOT 通道。
 
+模板引用了当前 Blender 骨架没有的骨，或出现尚不能映射到 PoseBone TRS 的属性时，插件不会再像旧预览那样静默丢弃，也不会因为一个非变形 dummy 拒绝整条动画。这些轨道不会进入 Action，界面会报告数量，导出时按源 MOT 的每个整数帧原样透传。`fp1400` 的 `_8d0` 就是已知的近零缩放非变形 dummy；它保留在参考 skeleton 和部分 MOT 中，但有意不创建为 Blender 骨。
+
 若模板出现以下情况，导出必须停止并明确报告：
 
-- 属性 `6` 或解析器尚不支持的属性。
-- 负骨号，或骨号无法解析为当前真实 Blender 骨骼。
 - 同一骨号和属性出现重复轨道。
 - Action 帧范围超过 MOT 能表示的范围。
 - NaN、Infinity、无法分解的变换矩阵或无法连续展开的旋转。
@@ -155,13 +156,12 @@ MOT 列表的每行显示文件名、帧数、轨道数和状态，并只放置�
 
 面板另提供当前动画级命令：
 
-- “恢复模板”：丢弃当前 Base Action 修改并重新烘焙，执行前要求确认。
 - “验证 MOT”：只读检查，不写文件。
 - “添加编辑层”：为当前动画创建唯一一条 Edit Action。
 - “合并编辑层”：逐帧烘焙 Base + Edit 为新的 Base Action，成功后移除 Edit。
-- “删除编辑层”：放弃并解除当前 Edit Action，执行前要求确认。
+- “删除编辑层”：放弃并解除当前 Edit Action。
 
-Action 保存这些自定义元数据：source MOT 路径、目标 MOT 路径、模型 ID、头部字段、模板摘要和导入插件版本。重新打开 `.blend` 后必须能恢复编辑上下文，不能只依赖内存缓存。
+Action 保存这些自定义元数据：会话标识、原文件名、Base/Edit 角色、source MOT 路径、目标 MOT 路径、模型 ID 和帧数。重新打开 `.blend` 后可以恢复动画资产与 Action 的关联，不只依赖内存缓存。
 
 ## 单层 NLA 编辑层
 
@@ -182,7 +182,7 @@ MOT Edit    用户修改 Action，NLA COMBINE
 
 MOT 写出必须先生成临时文件，再重新解析并验证，最后原子替换目标文件。失败时保留原 unpack MOT。
 
-每行导出必须明确使用该行动画关联的 Base/Edit Action，不能依赖 Armature 当时碰巧激活的 Action。导出非当前动画时，插件在临时 Armature 求值副本上绑定目标 Base/Edit、完成逐帧采样并恢复用户当前编辑状态。
+每行导出必须明确使用该行动画关联的 Base/Edit Action，不能依赖 Armature 当时碰巧激活的 Action。导出非当前动画时，插件临时绑定目标 Base/Edit、完成逐帧采样，并在结束后恢复原来绑定的动画和帧位置。
 
 自动测试至少覆盖：
 

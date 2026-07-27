@@ -68,9 +68,9 @@ blender --background --python test/blender_clp_tools_smoke.py -- <工作区 sour
 
 ## MOT 动画预览
 
-身体和面部模型导入后，`GBFR > MOT 动画预览` 会索引工作区 `source/data/pl/...` 或 `source/data/fp/...` 中的同模型 MOT。列表按文件名排序，点击条目才完整解析当前剪辑；切换条目会替换内存中的当前剪辑。
+身体和面部模型导入后，`GBFR > MOT 动画` 会索引工作区 `source` 与 `unpack` 中的同模型 MOT。列表按文件名排序；没有可编辑 Action 时，点击条目按需解析源剪辑。也可以逐行导入多个 Action、添加单层 NLA 编辑层，并把每条动画独立导出到 unpack。
 
-面部骨骼整理方法、当前限制和后续 Action 编辑/写回方案见 [MOT 动画制作与编辑](mot_animation_editing.md)。
+面部骨骼整理方法、Action 编辑、写回流程和当前限制见 [MOT 动画制作与编辑](mot_animation_editing.md)。
 
 - 预览器支持 MOT 压缩类型 `0-8`、常量/线性/Hermite 曲线和 60 FPS 时间轴。
 - 采样结果由帧回调直接写入 PoseBone `matrix_basis`，随后交给 Blender 依赖图计算已导入的 SOP 近似约束。

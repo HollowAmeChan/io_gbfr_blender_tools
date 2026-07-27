@@ -3,7 +3,10 @@ import struct
 import tempfile
 import unittest
 
-from gbfr_animation import AnimationKey, AnimationTrack, load_mot, read_mot_header
+from gbfr_animation import (
+    AnimationClip, AnimationKey, AnimationTrack, load_mot, read_mot_header,
+    serialize_mot_template, write_mot_template_atomic,
+)
 
 
 def make_constant_mot(path):
@@ -31,6 +34,48 @@ class AnimationTests(unittest.TestCase):
         self.assertAlmostEqual(1.0, linear.sample(5.0))
         hermite = AnimationTrack(0, 0, 4, 0, "hermite", (AnimationKey(0, 0.0), AnimationKey(10, 1.0)))
         self.assertAlmostEqual(0.5, hermite.sample(5.0))
+
+    def test_template_writer_preserves_contract_and_roundtrips_samples(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            template = AnimationClip(
+                root / "source.mot", 0x20200619, 3, 4, 27, "face_test",
+                (
+                    AnimationTrack(0x123, 3, 5, 1, "hermite", (AnimationKey(0, 0.0),)),
+                    AnimationTrack(0x124, 8, 7, 0, "hermite", (AnimationKey(0, 1.0),)),
+                ),
+            )
+            samples = ((0.25, 0.25, 0.25, 0.25), (1.0, 1.5, 2.0, 2.5))
+            payload = serialize_mot_template(template, samples)
+            direct = root / "direct.mot"
+            direct.write_bytes(payload)
+            clip = load_mot(direct)
+            self.assertEqual(
+                (template.version, template.flags, template.frame_count, template.unknown, template.name),
+                (clip.version, clip.flags, clip.frame_count, clip.unknown, clip.name),
+            )
+            self.assertEqual(
+                [(0x123, 3, 0, 1), (0x124, 8, 1, 0)],
+                [(track.bone_id, track.property, track.compression, track.unknown) for track in clip.tracks],
+            )
+            for track, expected in zip(clip.tracks, samples):
+                self.assertEqual(expected, tuple(track.sample(frame) for frame in range(4)))
+
+            destination = root / "unpack/data/fp/fp0000/face_test.mot"
+            self.assertEqual(destination.resolve(), write_mot_template_atomic(template, samples, destination))
+            self.assertEqual(payload, destination.read_bytes())
+
+    def test_template_writer_rejects_bad_sample_shape_and_nonfinite_values(self):
+        template = AnimationClip(
+            Path("source.mot"), 1, 0, 2, 0, "test",
+            (AnimationTrack(1, 0, 0, 0, "constant", (AnimationKey(0, 0.0),)),),
+        )
+        with self.assertRaisesRegex(ValueError, "轨道数量"):
+            serialize_mot_template(template, ())
+        with self.assertRaisesRegex(ValueError, "采样帧数"):
+            serialize_mot_template(template, ((0.0,),))
+        with self.assertRaisesRegex(ValueError, "NaN"):
+            serialize_mot_template(template, ((0.0, float("nan")),))
 
 
 if __name__ == "__main__":

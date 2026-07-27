@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import bisect
 import math
 import struct
+import tempfile
 
 
 @dataclass(frozen=True)
@@ -203,3 +205,119 @@ def load_mot(path: str | Path) -> AnimationClip:
         _validate_keys(header.path, keys)
         tracks.append(AnimationTrack(bone_id, prop, compression, track_unknown, curve, tuple(keys)))
     return AnimationClip(header.path, header.version, header.flags, header.frame_count, unknown, header.name, tuple(tracks))
+
+
+def _float32(value: float) -> float:
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError("MOT 输出包含 NaN 或 Infinity")
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
+def serialize_mot_template(
+    template: AnimationClip,
+    sampled_tracks,
+) -> bytes:
+    """Serialize full-frame samples while preserving the template track contract."""
+    if not 0 < int(template.frame_count) <= 0x7FFF:
+        raise ValueError(f"MOT 帧数无法写入 int16: {template.frame_count}")
+    if len(template.tracks) > 0xFFFFFFFF:
+        raise ValueError("MOT 轨道数量过大")
+    name = template.name.encode("ascii", errors="strict")
+    if len(name) > 20:
+        raise ValueError("MOT 内部名称超过 20 个 ASCII 字节")
+
+    sampled_tracks = tuple(tuple(_float32(value) for value in values) for values in sampled_tracks)
+    if len(sampled_tracks) != len(template.tracks):
+        raise ValueError(
+            f"MOT 采样轨道数量不一致: {len(sampled_tracks)} != {len(template.tracks)}"
+        )
+    for index, values in enumerate(sampled_tracks):
+        if len(values) != template.frame_count:
+            raise ValueError(
+                f"MOT 轨道 {index} 采样帧数不一致: {len(values)} != {template.frame_count}"
+            )
+
+    records_offset = 44
+    record_size = 12
+    data = bytearray(records_offset + len(template.tracks) * record_size)
+    struct.pack_into("<I", data, 0, 0x00746F6D)
+    struct.pack_into("<I", data, 4, int(template.version))
+    struct.pack_into("<H", data, 8, int(template.flags))
+    struct.pack_into("<h", data, 10, int(template.frame_count))
+    struct.pack_into("<I", data, 12, records_offset)
+    struct.pack_into("<I", data, 16, len(template.tracks))
+    struct.pack_into("<I", data, 20, int(template.unknown))
+    data[24:24 + len(name)] = name
+
+    for index, (track, values) in enumerate(zip(template.tracks, sampled_tracks)):
+        record = records_offset + index * record_size
+        first = values[0]
+        if all(value == first for value in values[1:]):
+            struct.pack_into(
+                "<hbbhHf", data, record,
+                int(track.bone_id), int(track.property), 0, 1, int(track.unknown), first,
+            )
+            continue
+
+        data_offset = len(data)
+        relative = data_offset - record
+        struct.pack_into(
+            "<hbbhHI", data, record,
+            int(track.bone_id), int(track.property), 1,
+            int(template.frame_count), int(track.unknown), relative,
+        )
+        data.extend(struct.pack(f"<{template.frame_count}f", *values))
+    return bytes(data)
+
+
+def write_mot_template_atomic(
+    template: AnimationClip,
+    sampled_tracks,
+    destination: str | Path,
+) -> Path:
+    """Write and reparse a template-based MOT before replacing its unpack target."""
+    destination = Path(destination).expanduser().resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    payload = serialize_mot_template(template, sampled_tracks)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", delete=False, dir=destination.parent,
+            prefix=f".{destination.name}.", suffix=".tmp",
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        parsed = load_mot(temporary)
+        if (
+            parsed.version != template.version
+            or parsed.flags != template.flags
+            or parsed.frame_count != template.frame_count
+            or parsed.unknown != template.unknown
+            or parsed.name != template.name
+            or len(parsed.tracks) != len(template.tracks)
+        ):
+            raise ValueError("MOT 临时文件头部或轨道数量往返不一致")
+        for index, (source, output, expected) in enumerate(
+            zip(template.tracks, parsed.tracks, sampled_tracks)
+        ):
+            if (
+                output.bone_id != source.bone_id
+                or output.property != source.property
+                or output.unknown != source.unknown
+            ):
+                raise ValueError(f"MOT 临时文件轨道 {index} 契约往返不一致")
+            actual = tuple(output.sample(frame) for frame in range(template.frame_count))
+            if actual != tuple(_float32(value) for value in expected):
+                raise ValueError(f"MOT 临时文件轨道 {index} 采样往返不一致")
+        os.replace(temporary, destination)
+        temporary = None
+        return destination
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass

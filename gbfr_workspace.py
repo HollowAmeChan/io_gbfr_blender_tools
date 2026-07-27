@@ -22,6 +22,14 @@ class ClothFileRecord:
 
 
 @dataclass(frozen=True)
+class AnimationAsset:
+    name: str
+    source: Path | None
+    unpack: Path
+    preview: Path
+
+
+@dataclass(frozen=True)
 class ModelBundle:
     workspace_json: Path
     workspace_root: Path
@@ -35,7 +43,7 @@ class ModelBundle:
     material_json: Path | None
     sop: Path | None
     sop_report: dict | None
-    animations: tuple[Path, ...]
+    animations: tuple[AnimationAsset, ...]
     cloth_files: tuple[ClothFileRecord, ...]
 
     @property
@@ -247,16 +255,27 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         if value:
             sop_candidates.append(_asset_path(root, value).with_suffix(".sop"))
     sop = next((path.resolve() for path in sop_candidates if path.is_file()), None)
-    animation_paths = {}
-    for animation_root in (
-        preferred_root / "data" / model_id[:2] / model_id,
-        fallback_root / "data" / model_id[:2] / model_id,
-    ):
+    source_animation_root = source_root / "data" / model_id[:2] / model_id
+    unpack_animation_root = unpack_root / "data" / model_id[:2] / model_id
+    animation_names = set()
+    for animation_root in (source_animation_root, unpack_animation_root):
         if animation_root.is_dir():
-            for path in animation_root.glob("*.mot"):
-                if path.is_file():
-                    animation_paths.setdefault(path.name.casefold(), path.resolve())
-    animations = tuple(sorted(animation_paths.values(), key=lambda path: path.name.casefold()))
+            animation_names.update(
+                path.name for path in animation_root.glob("*.mot") if path.is_file()
+            )
+    animations = []
+    for name in sorted(animation_names, key=str.casefold):
+        source = source_animation_root / name
+        unpack = unpack_animation_root / name
+        source = source.resolve() if source.is_file() else None
+        unpack = unpack.resolve()
+        if prefer_source:
+            preview = source or unpack
+        else:
+            preview = unpack if unpack.is_file() else source
+        if preview is None:
+            continue
+        animations.append(AnimationAsset(name, source, unpack, preview))
 
     cloth_files = []
     for record in document.get("ClothFiles") or []:
@@ -290,6 +309,6 @@ def resolve_model_bundle(minfo_path: str | Path, workspace_json: str | Path | No
         material_json=material_json,
         sop=sop,
         sop_report=sop_report,
-        animations=animations,
+        animations=tuple(animations),
         cloth_files=tuple(cloth_files),
     )
