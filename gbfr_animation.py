@@ -28,13 +28,13 @@ def guess_mot_annotation(name: str | Path) -> str:
     annotation = _MOT_SUFFIX_ANNOTATIONS.get(suffix)
     if annotation is not None:
         return annotation
-    if len(suffix) == 4:
+    if len(suffix) == 4 and suffix[0] == "c" and suffix[-1] == "b":
         try:
-            value = int(suffix, 16)
+            value = int(suffix[1:3], 16)
         except ValueError:
             pass
         else:
-            if int("c50b", 16) <= value <= int("c84b", 16):
+            if 0x50 <= value <= 0x84:
                 return "口型"
     return ""
 

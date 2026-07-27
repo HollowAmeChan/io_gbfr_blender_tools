@@ -35,6 +35,7 @@ class AnimationTests(unittest.TestCase):
         for name, annotation in expected.items():
             self.assertEqual(annotation, guess_mot_annotation(name))
         self.assertEqual("", guess_mot_annotation("fp1400_c50a.mot"))
+        self.assertEqual("", guess_mot_annotation("fp1400_c50c.mot"))
         self.assertEqual("", guess_mot_annotation("fp1400_c84c.mot"))
         self.assertEqual("", guess_mot_annotation("fp1400_e001.mot"))
         self.assertEqual("", guess_mot_annotation("fp1400_idle.mot"))
