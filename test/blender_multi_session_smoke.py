@@ -68,11 +68,12 @@ assert bpy.ops.gbfr.activate_session(collection_name=pl_session.name) == {"FINIS
 
 pl_node = pl_session.gbfr_session.armature.gbfr_cloth.clp_groups[0].nodes[0]
 original_friction = pl_node.friction
+fp_material_missing = fp_session.gbfr_session.mesh.get("gbfr_material_missing")
 pl_node.friction = original_friction + 0.123
 assert bpy.ops.gbfr.restore_session_data() == {"FINISHED"}
 assert abs(pl_session.gbfr_session.armature.gbfr_cloth.clp_groups[0].nodes[0].friction - original_friction) < 1e-6
-assert fp_session.gbfr_session.armature.gbfr_cloth.enabled
-assert fp_session.gbfr_session.mesh["gbfr_material_missing"] == 0
+assert not fp_session.gbfr_session.armature.gbfr_cloth.enabled
+assert fp_session.gbfr_session.mesh.get("gbfr_material_missing") == fp_material_missing
 assert custom_object.name in custom_collection.objects
 
 print(

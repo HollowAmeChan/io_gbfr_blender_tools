@@ -284,27 +284,57 @@ def resolve_model_bundle(
         if value:
             sop_candidates.append(_asset_path(root, value).with_suffix(".sop"))
     sop = next((path.resolve() for path in sop_candidates if path.is_file()), None)
-    source_animation_root = source_root / "data" / model_id[:2] / model_id
-    unpack_animation_root = unpack_root / "data" / model_id[:2] / model_id
-    animation_names = set()
-    for animation_root in (source_animation_root, unpack_animation_root):
-        if animation_root.is_dir():
-            animation_names.update(
-                path.name for path in animation_root.glob("*.mot") if path.is_file()
-            )
     animations = []
-    for name in sorted(animation_names, key=str.casefold):
-        source = source_animation_root / name
-        unpack = unpack_animation_root / name
-        source = source.resolve() if source.is_file() else None
-        unpack = unpack.resolve()
-        if prefer_source:
-            preview = source or unpack
-        else:
-            preview = unpack if unpack.is_file() else source
-        if preview is None:
-            continue
-        animations.append(AnimationAsset(name, source, unpack, preview))
+    if "AnimationFiles" in document:
+        animation_names = set()
+        for record in document.get("AnimationFiles") or []:
+            if str(record.get("FileType") or "mot").casefold() != "mot":
+                continue
+            owner = str(record.get("ModelId") or "").casefold()
+            if owner != model_id.casefold():
+                continue
+            source_value = record.get("Source")
+            input_value = record.get("Input")
+            if not input_value:
+                raise WorkspaceError(f"{model_id} 的 MOT 记录缺少 unpack 输入路径")
+            source = _asset_path(root, source_value).resolve() if source_value else None
+            unpack = _asset_path(root, input_value).resolve()
+            try:
+                unpack.relative_to(unpack_root.resolve())
+            except ValueError as error:
+                raise WorkspaceError(f"MOT 输入路径不在工作区 unpack 中: {unpack}") from error
+            name = unpack.name
+            if name.casefold() in animation_names:
+                raise WorkspaceError(f"workspace.json 中重复登记 MOT: {name}")
+            animation_names.add(name.casefold())
+            source = source if source is not None and source.is_file() else None
+            preview = source if prefer_source and source is not None else (
+                unpack if unpack.is_file() else source
+            )
+            if preview is not None:
+                animations.append(AnimationAsset(name, source, unpack, preview))
+        animations.sort(key=lambda item: item.name.casefold())
+    else:
+        # Version 1 workspaces created before MOT registration remain readable.
+        source_animation_root = source_root / "data" / model_id[:2] / model_id
+        unpack_animation_root = unpack_root / "data" / model_id[:2] / model_id
+        animation_names = set()
+        for animation_root in (source_animation_root, unpack_animation_root):
+            if animation_root.is_dir():
+                animation_names.update(
+                    path.name for path in animation_root.glob("*.mot") if path.is_file()
+                )
+        for name in sorted(animation_names, key=str.casefold):
+            source = source_animation_root / name
+            unpack = unpack_animation_root / name
+            source = source.resolve() if source.is_file() else None
+            unpack = unpack.resolve()
+            if prefer_source:
+                preview = source or unpack
+            else:
+                preview = unpack if unpack.is_file() else source
+            if preview is not None:
+                animations.append(AnimationAsset(name, source, unpack, preview))
 
     cloth_files = []
     for record in document.get("ClothFiles") or []:

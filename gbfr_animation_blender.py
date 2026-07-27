@@ -63,6 +63,7 @@ def _selection_update(state, context):
 class GBFRAnimationStateProperties(PropertyGroup):
     enabled: BoolProperty(default=False)
     minfo_path: StringProperty(name="minfo", subtype="FILE_PATH")
+    workspace_path: StringProperty(name="workspace.json", subtype="FILE_PATH")
     model_id: StringProperty(name="模型")
     cache_key: StringProperty()
     animations: CollectionProperty(type=GBFRAnimationEntryProperties)
@@ -294,6 +295,7 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
     state.suspend_updates = True
     state.animations.clear()
     state.minfo_path = str(bundle.minfo)
+    state.workspace_path = str(bundle.workspace_json)
     state.model_id = bundle.model_id
     if not state.cache_key:
         state.cache_key = uuid.uuid4().hex
@@ -640,16 +642,10 @@ def _entry_source_preview_path(entry) -> str:
 
 
 def _entry_unpack_path(armature, entry) -> Path:
-    cached = entry.unpack_path.strip()
-    if cached:
-        destination = Path(bpy.path.abspath(cached)).expanduser().resolve()
-        if destination.suffix.casefold() == ".mot" and not destination.is_dir():
-            return destination
-
     state = armature.gbfr_animation
     if not state.minfo_path.strip():
         raise ValueError("当前动画会话没有 minfo 路径；请刷新工作区后重试")
-    bundle = resolve_model_bundle(state.minfo_path)
+    bundle = resolve_model_bundle(state.minfo_path, state.workspace_path or None)
     asset = next(
         (
             candidate for candidate in bundle.animations
@@ -1267,7 +1263,11 @@ class GBFR_OT_AnimationRefresh(Operator):
         if armature is None:
             return {"CANCELLED"}
         try:
-            populate_animation_state(armature, resolve_model_bundle(armature.gbfr_animation.minfo_path))
+            state = armature.gbfr_animation
+            populate_animation_state(
+                armature,
+                resolve_model_bundle(state.minfo_path, state.workspace_path or None),
+            )
         except Exception as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}

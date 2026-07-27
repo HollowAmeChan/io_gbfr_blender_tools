@@ -68,15 +68,12 @@ with tempfile.TemporaryDirectory(prefix="gbfr_mot_roundtrip_") as temporary:
 
     original_resolver = animation_blender.resolve_model_bundle
     first.unpack_path = ""
-    animation_blender.resolve_model_bundle = lambda _path: SimpleNamespace(
+    animation_blender.resolve_model_bundle = lambda _path, _workspace=None: SimpleNamespace(
         animations=(SimpleNamespace(
             name=first.name, unpack=output, source=Path(first.source_path),
         ),),
     )
-    try:
-        assert _entry_unpack_path(armature, first) == output.resolve()
-    finally:
-        animation_blender.resolve_model_bundle = original_resolver
+    assert _entry_unpack_path(armature, first) == output.resolve()
     assert bpy.ops.gbfr.animation_export_action(animation_index=indices[0]) == {"FINISHED"}
     exported = load_mot(output)
     assert first.export_exists
@@ -99,6 +96,7 @@ with tempfile.TemporaryDirectory(prefix="gbfr_mot_roundtrip_") as temporary:
         )
         for frame in range(clip.frame_count):
             assert abs(output_track.sample(frame) - source_track.sample(frame)) < 2e-5
+    animation_blender.resolve_model_bundle = original_resolver
 try:
     load_selected_animation(armature, bpy.context.scene)
 except ValueError as error:
@@ -139,7 +137,13 @@ assert abs(after.translation.x - before.translation.x) > 1e-4
 
 with tempfile.TemporaryDirectory(prefix="gbfr_mot_edit_") as temporary:
     output = Path(temporary) / first.name
-    first.unpack_path = str(output)
+    original_resolver = animation_blender.resolve_model_bundle
+    animation_blender.resolve_model_bundle = lambda _path, _workspace=None: SimpleNamespace(
+        animations=(SimpleNamespace(
+            name=first.name, unpack=output, source=Path(first.source_path),
+        ),),
+    )
+    first.unpack_path = ""
     assert bpy.ops.gbfr.animation_export_action(animation_index=indices[0]) == {"FINISHED"}
     assert output.is_file()
     exported = load_mot(output)
@@ -186,6 +190,7 @@ with tempfile.TemporaryDirectory(prefix="gbfr_mot_edit_") as temporary:
     assert _entry_edit_action(first) is None
     assert armature.animation_data.action == merged
     assert len(armature.animation_data.nla_tracks) == 0
+    animation_blender.resolve_model_bundle = original_resolver
 
 assert bpy.ops.gbfr.animation_remove_action(animation_index=indices[1]) == {"FINISHED"}
 assert _has_imported_actions(state)

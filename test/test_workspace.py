@@ -53,6 +53,12 @@ class WorkspaceTests(unittest.TestCase):
                     {"FileType": "minfo", "Input": paths["fp_minfo"], "Source": paths["source_fp_minfo"]},
                     {"FileType": "mmesh", "Input": paths["fp_mmesh"], "Source": paths["source_fp_mmesh"]},
                 ],
+                "AnimationFiles": [{
+                    "ModelId": "pl9999", "FileType": "mot",
+                    "Source": paths["mot"], "Input": paths["unpack_mot"],
+                    "Output": "build/data/pl/pl9999/pl9999_0001.mot",
+                    "SourceSha256": "source-hash", "BaselineSha256": "mot-hash",
+                }],
                 "ClothFiles": [
                     {"Category": "clp", "GroupId": 0, "Xml": paths["clp"], "Source": "source/a.bxm", "Output": "build/a.bxm", "SourceSha256": "source-hash", "BaselineSha256": "xml-hash"},
                     {"Category": "clh", "GroupId": 1, "Xml": paths["clh"], "Source": "source/b.bxm", "Output": "build/b.bxm"},

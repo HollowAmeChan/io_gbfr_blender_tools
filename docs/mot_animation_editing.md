@@ -27,7 +27,7 @@ for bone in bpy.context.object.data.edit_bones:
 
 ## MOT 预览与 Action 编辑
 
-导入面部模型 `.minfo` 后，`GBFR > MOT 动画` 会索引 `source/data/fp/fpXXXX` 或 `unpack/data/fp/fpXXXX` 中的同模型 MOT。点击列表条目后，插件按 60 FPS 在内存中采样，并直接更新 PoseBone `matrix_basis`。
+导入面部模型 `.minfo` 后，`GBFR > MOT 动画` 会优先读取当前会话 `workspace.json/AnimationFiles` 中 `ModelId` 完全一致的 MOT。旧工作区没有 `AnimationFiles` 时才兼容扫描 `source/data/fp/fpXXXX` 与 `unpack/data/fp/fpXXXX`。点击列表条目后，插件按 60 FPS 在内存中采样，并直接更新 PoseBone `matrix_basis`。
 
 源文件预览仍有以下限制：
 
@@ -79,7 +79,7 @@ for bone in bpy.context.object.data.edit_bones:
 3. 场景切到 60 FPS，时间范围设为 `0` 到 `frame_count - 1`。
 4. 用户进入 Pose Mode，选择面部骨骼，通过普通 Location、Rotation、Scale 和关键帧编辑表情。
 5. 点击“验证 MOT”，检查骨号、轨道、非有限值、旋转连续性和目标路径。
-6. 点击该行的“导出到 unpack”，只写出这一条动画到 `unpack/data/fp/fpXXXX/<原文件名>.mot`。
+6. 点击该行的“导出到 unpack”，只写出这一条动画到当前会话工作区 `AnimationFiles` 登记的 `Input`；旧工作区则使用兼容计算出的 `unpack/data/fp/fpXXXX/<原文件名>.mot`。
 7. GBFR Modtools 再负责把确认后的文件封装到 build，source 原文件始终不覆盖。
 
 列表始终显示全部源 MOT，但不一次性烘焙全部动作。用户可以逐行导入任意多个动画；所有已导入的 Action 同时保存在 `.blend`，无需重新解析即可来回切换。一个 Armature 同一时间只绑定一条动画作为当前编辑目标，其他 Action 保持未绑定状态，不参与求值。
@@ -209,7 +209,7 @@ MOT 写出必须先生成临时文件，再重新解析并验证，最后原子�
 2. 未编辑 Action 写回后，重新解析的每条轨道在每个整数帧与原文件误差小于规定阈值。
 3. 编辑单根面部骨后，只有该骨相关输出轨道的采样值发生变化。
 4. version、flags、内部名称、头部 unknown、轨道顺序和轨道 unknown 保持不变。
-5. source MOT 永不写入，输出只落到 workspace 的 unpack 路径。
+5. source MOT 永不写入，输出只落到当前会话 workspace 明确登记的 unpack 路径。
 6. Blender 关闭重开后，Action 元数据仍能正确定位模板和输出。
 
 ## 实施顺序
