@@ -30,9 +30,11 @@ Blender 的 `Armature.data.bones` 顺序不是可靠的游戏骨骼索引。即�
 2. 融合后新增的骨骼统一追加到 source 骨骼之后。
 3. `.skeleton` 的 `ParentId`、`.minfo` 的 deform bone 表和 `.mmesh` 权重索引共同使用这张表。
 
+source `.skeleton` 只提供稳定索引契约，不会替代当前 Blender 的 rest pose。导出器对 Blender 中存在的每根原骨重新读取 `bone.matrix_local`，写出当前局部位置和旋转；因此移动脸骨的 `head`、改变方向或 Roll 会进入新的 `.skeleton`。单纯沿原方向修改 `tail` 长度不会改变矩阵，也不会写出骨长。`fpXXXX` 已知存在 Blender 导入时因近零缩放而省略的非蒙皮占位骨（例如 `_8d0`）；这些缺失槽位单独从 source 原样保留，其他脸骨仍按 Blender 当前变换重建，不能再通过复制整份 source skeleton 处理。
+
 父子关系通过重新计算的 `ParentId` 保持，不要求父子骨在 Blender 列表中相邻。当前回归样本已验证：342 根原骨融合为 838 根后，原骨名称和父索引逐项不变，新增骨从索引 342 开始输出。
 
-这项处理属于 GBFR 导出契约，不要求通用骨架融合工具写入 GBFR 自定义属性。已经融合好的 `.blend` 也可直接根据工作区 source skeleton 恢复导出顺序。前提是原骨骼没有被删除、重命名或改变父级；缺少源骨、出现重复导出骨名或修改原父级时，导出器会拒绝生成不一致的文件。
+这项处理属于 GBFR 导出契约，不要求通用骨架融合工具写入 GBFR 自定义属性。已经融合好的 `.blend` 也可直接根据工作区 source skeleton 恢复导出顺序。前提是原骨骼没有被删除、重命名或改变父级；除 `fpXXXX` 已知非蒙皮占位槽外，缺少源骨、出现重复导出骨名或修改原父级时，导出器会拒绝生成不一致的文件。
 
 重新导出后必须把同一次生成的 `.minfo`、`.skeleton` 和全部 `.mmesh` 一起构建、投放。只替换 `data/model_streaming` 中的 `.mmesh`，让它搭配游戏原版 `.minfo/.skeleton`，会造成权重表和骨骼索引契约不一致。
 

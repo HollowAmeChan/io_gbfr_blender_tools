@@ -11,7 +11,7 @@
 - 不要修改 Bone Roll、父子关系或骨骼名称。
 - 不要启用 Connected 后再缩短父骨，避免连带移动子骨的 `head`。插件导入的原骨默认不连接。
 
-GBFR `.skeleton` 不保存 tail 或骨长，只保存父级、局部位置、四元数和缩放。插件导入时给骨骼设置的长度是 Blender 显示长度；沿原方向缩短不会改变 `bone.matrix_local`，也不会改变模型导出的骨骼位置和旋转。`fpXXXX` 联合导出还会原样保留 source skeleton。
+GBFR `.skeleton` 不保存 tail 或骨长，只保存父级、局部位置、四元数和缩放。插件导入时给骨骼设置的长度是 Blender 显示长度；沿原方向缩短不会改变 `bone.matrix_local`，也不会改变模型导出的骨骼位置和旋转。移动 `head`、改变骨骼方向或 Bone Roll 则会改变 rest transform；模型导出会把当前 Blender rest 位置和旋转写入 `.skeleton`。`fpXXXX` 与身体使用同一重建规则：source 只锁定既有骨号、顺序以及 Blender 中缺失的占位骨槽，不会覆盖 Blender 中已经存在的脸骨变换。
 
 在骨架编辑模式中选择需要缩短的骨骼，可以在 Blender Python Console 执行：
 

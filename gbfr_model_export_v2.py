@@ -99,8 +99,10 @@ def export_bone_name(bone):
 	return export_name
 
 
-def ordered_export_bones(armature_obj, reference_skeleton=None):
-	"""Return a stable binary order without rebuilding Blender's armature."""
+def ordered_export_bones(
+	armature_obj, reference_skeleton=None, preserve_missing_reference_bones=False,
+):
+	"""Return source-indexed Blender bones, optionally retaining empty source slots."""
 	native_bones = list(armature_obj.data.bones)
 	if reference_skeleton is not None:
 		bones_by_export_name = {}
@@ -117,13 +119,15 @@ def ordered_export_bones(armature_obj, reference_skeleton=None):
 			bone = bones_by_export_name.get(reference_name)
 			if bone is None:
 				missing.append(reference_name)
+				if preserve_missing_reference_bones:
+					ordered.append(None)
 			else:
 				ordered.append(bone)
-		if missing:
+		if missing and not preserve_missing_reference_bones:
 			detail = ", ".join(missing[:8])
 			raise RuntimeError(f"缺少源骨骼，无法保持 skeleton 索引: {detail}")
 
-		original_names = {bone.name for bone in ordered}
+		original_names = {bone.name for bone in ordered if bone is not None}
 		ordered.extend(bone for bone in native_bones if bone.name not in original_names)
 		return ordered
 
@@ -296,28 +300,58 @@ def rename_new_bones_for_experimental_export(armature_obj, mesh_objects, referen
 	return tuple(rename_records)
 
 
-def build_skeleton(armature_obj, deform_joints_table=None, export_bones=None):
+def build_skeleton(
+	armature_obj, deform_joints_table=None, export_bones=None, reference_skeleton=None,
+):
 	export_bones = list(export_bones) if export_bones is not None else ordered_export_bones(armature_obj)
-	bone_index_by_name = {bone.name: index for index, bone in enumerate(export_bones)}
+	if any(bone is None for bone in export_bones) and reference_skeleton is None:
+		raise RuntimeError("保留缺失的 source 骨骼槽位需要 reference skeleton")
+	bone_index_by_name = {
+		bone.name: index for index, bone in enumerate(export_bones) if bone is not None
+	}
 	DeformJointsTable = list(deform_joints_table) if deform_joints_table is not None else list(range(len(export_bones)))
 	BoneInfoTablesList = []
 	
 	skeleton_builder = Builder(0)
 	for n, bone in enumerate(export_bones):
-		parent = bone.parent
-		if parent is None:
-			parent = 65535
+		reference_bone = (
+			reference_skeleton.Body(n)
+			if reference_skeleton is not None and n < reference_skeleton.BodyLength()
+			else None
+		)
+		if bone is None:
+			parent = reference_bone.ParentId()
+			export_name = reference_bone.Name().decode("utf-8")
+			position = reference_bone.Position()
+			rotation = reference_bone.Quat()
+			scale_value = reference_bone.Scale()
+			pos_values = (position.X(), position.Y(), position.Z())
+			quat_values = (rotation.X(), rotation.Y(), rotation.Z(), rotation.W())
+			scale_values = (scale_value.X(), scale_value.Y(), scale_value.Z())
 		else:
-			parent = bone_index_by_name[parent.name]
-		export_name = export_bone_name(bone)
+			parent = bone.parent
+			if parent is None:
+				parent = 65535
+			else:
+				parent = bone_index_by_name[parent.name]
+			export_name = export_bone_name(bone)
+			bone_matrix = bone.matrix_local
+			if bone.parent:
+				bone_matrix = bone.parent.matrix_local.inverted() @ bone.matrix_local
+			position = bone_matrix.translation
+			rotation = bone_matrix.to_quaternion()
+			pos_values = (position[0], position[1], position[2])
+			quat_values = (rotation[1], rotation[2], rotation[3], rotation[0])
+			scale_values = (1.0, 1.0, 1.0)
 		name = skeleton_builder.CreateString(export_name)
-		bone_matrix = bone.matrix_local
-		if bone.parent:
-			bone_matrix = bone.parent.matrix_local.inverted() @ bone.matrix_local
 		
 		# Get bone's bonegroup
 		a1 = None
-		if n != 0:
+		if bone is None and reference_bone.A1() is not None:
+			a1 = CreateBoneInfo(
+				skeleton_builder, reference_bone.A1().BoneId(), reference_bone.A1().Unk(),
+			)
+		elif bone is not None and n != 0:
 			try:
 				if bpy.app.version >= (4, 0, 0): # Blender 4
 					for bone_collection in armature_obj.data.collections:
@@ -337,12 +371,11 @@ def build_skeleton(armature_obj, deform_joints_table=None, export_bones=None):
 			BoneAddA1(skeleton_builder, a1)
 		BoneAddParentId(skeleton_builder, parent)
 		BoneAddName(skeleton_builder, name)
-		pos = CreateVec3(skeleton_builder, bone_matrix.translation[0], bone_matrix.translation[1], bone_matrix.translation[2])
+		pos = CreateVec3(skeleton_builder, *pos_values)
 		BoneAddPosition(skeleton_builder, pos)
-		quat = bone_matrix.to_quaternion()
-		quat = CreateQuaternion(skeleton_builder, quat[1], quat[2], quat[3], quat[0])           
+		quat = CreateQuaternion(skeleton_builder, *quat_values)
 		BoneAddQuat(skeleton_builder, quat)
-		scale = CreateVec3(skeleton_builder, 1.0, 1.0, 1.0)
+		scale = CreateVec3(skeleton_builder, *scale_values)
 		BoneAddScale(skeleton_builder, scale)
 		bone = BoneEnd(skeleton_builder)
 		
@@ -428,7 +461,7 @@ def write_some_data(
 	create_model_subfolders: bool,
 	reference_skeleton_path=None,
 	experimental_rename_new_bones: bool = False,
-	preserve_reference_skeleton: bool = False,
+	preserve_missing_reference_bones: bool = False,
 ):
 	total_export_timer_start = time.perf_counter()
 	export_section_timer_start = time.perf_counter() # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
@@ -532,32 +565,32 @@ def write_some_data(
 	deform_bones_table = []
 	if armature_obj:
 		reference_skeleton = None
-		reference_buffer = None
 		if reference_skeleton_path:
 			with open(reference_skeleton_path, "rb") as reference_file:
 				reference_buffer = bytearray(reference_file.read())
 			reference_skeleton = ModelSkeleton.GetRootAs(reference_buffer, 0)
-		if preserve_reference_skeleton and reference_skeleton is None:
-			raise RuntimeError("保留源 skeleton 需要有效的 reference skeleton")
+		if preserve_missing_reference_bones and reference_skeleton is None:
+			raise RuntimeError("保留缺失的 source 骨骼槽位需要有效的 reference skeleton")
 		exported_bone_names = {
 			bone.name: export_bone_name(bone) for bone in armature_obj.data.bones
 		}
-		if experimental_rename_new_bones and not preserve_reference_skeleton:
+		if experimental_rename_new_bones:
 			renamed_bones = rename_new_bones_for_experimental_export(
 				armature_obj, mesh_objects, reference_skeleton
 			)
 			for old_name, new_name in renamed_bones:
 				print(f"Experimental appended bone rename: {old_name} -> {new_name}")
 			exported_bone_names.update(dict(renamed_bones))
-		if preserve_reference_skeleton:
-			bone_name_to_index_dict = {
-				reference_skeleton.Body(index).Name().decode("utf-8"): index
-				for index in range(reference_skeleton.BodyLength())
-			}
-			export_bones = None
-		else:
-			export_bones = ordered_export_bones(armature_obj, reference_skeleton)
-			bone_name_to_index_dict = {bone.name: i for i, bone in enumerate(export_bones)}
+		export_bones = ordered_export_bones(
+			armature_obj,
+			reference_skeleton,
+			preserve_missing_reference_bones=preserve_missing_reference_bones,
+		)
+		bone_name_to_index_dict = {
+			bone.name: index
+			for index, bone in enumerate(export_bones)
+			if bone is not None
+		}
 		# The game keeps skeleton bone 0 as the deform root even when no vertex
 		# is directly weighted to it.
 		used_bone_indices = {0} if bone_name_to_index_dict else set()
@@ -583,24 +616,25 @@ def write_some_data(
 			bone_index: deform_index
 			for deform_index, bone_index in enumerate(deform_bones_table)
 		}
-		if preserve_reference_skeleton:
-			skeleton_buffer = reference_buffer
-			print(f"Preserved reference skeleton: {reference_skeleton.BodyLength()} bones")
-		else:
-			# Re-encode and rename all the bone groups back to 4-byte little-endian ASCII uints
-			bone_groups = armature_obj.data.collections if bpy.app.version >= (4, 0, 0) else armature_obj.pose.bone_groups
-			for bone_group in bone_groups:
-				try:
-					bone_group.name = encode_bone_group_name(bone_group.name)
-					print("Renamed bone group to:", bone_group.name)
-				except:
-					raise ValueError(
-						format_exception(f"Bone group name '{bone_group.name}' is invalid.\n"
-						+ "When exporting to GBFR, Bone group names can only\n"
-						+ "consist only of alphanumeric characters, no unicode (i.e. japanese symbols).\n"
-						+ "Group names will also be truncated to 4 bytes, starting with an '_'.")
-						)
-			skeleton_buffer, deform_bones_table = build_skeleton(armature_obj, deform_bones_table, export_bones)
+		# Re-encode and rename all the bone groups back to 4-byte little-endian ASCII uints
+		bone_groups = armature_obj.data.collections if bpy.app.version >= (4, 0, 0) else armature_obj.pose.bone_groups
+		for bone_group in bone_groups:
+			try:
+				bone_group.name = encode_bone_group_name(bone_group.name)
+				print("Renamed bone group to:", bone_group.name)
+			except:
+				raise ValueError(
+					format_exception(f"Bone group name '{bone_group.name}' is invalid.\n"
+					+ "When exporting to GBFR, Bone group names can only\n"
+					+ "consist only of alphanumeric characters, no unicode (i.e. japanese symbols).\n"
+					+ "Group names will also be truncated to 4 bytes, starting with an '_'.")
+					)
+		skeleton_buffer, deform_bones_table = build_skeleton(
+			armature_obj, deform_bones_table, export_bones, reference_skeleton,
+		)
+		if preserve_missing_reference_bones:
+			missing_count = sum(bone is None for bone in export_bones)
+			print(f"Rebuilt skeleton and preserved {missing_count} missing source bone slot(s)")
 
 		# Save skeleton_buffer output to .skeleton file
 		# ================================================

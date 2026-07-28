@@ -141,55 +141,62 @@ def _install_workspace_export(staging_root, targets, extra_files=()):
                 pass
 
 
-def _validate_skeleton_contract(root, reference_path, preserve_reference_skeleton=False):
+def _validate_skeleton_contract(root, reference_path, preserve_missing_reference_bones=False):
     if reference_path is None:
         return
     if root.type != "ARMATURE":
         raise RuntimeError("源资源包含 skeleton，但当前导出根对象不是骨架")
 
     reference = ModelSkeleton.GetRootAs(bytearray(Path(reference_path).read_bytes()), 0)
-    if preserve_reference_skeleton:
-        reference_names = {
-            reference.Body(index).Name().decode("utf-8")
-            for index in range(reference.BodyLength())
-        }
-        missing_groups = set()
-        for lod_object in root.children:
-            for mesh_object in lod_object.children:
-                if mesh_object.type != "MESH":
-                    continue
-                for vertex in mesh_object.data.vertices:
-                    for influence in vertex.groups:
-                        if influence.weight <= 0.0 or influence.group >= len(mesh_object.vertex_groups):
-                            continue
-                        group_name = mesh_object.vertex_groups[influence.group].name
-                        if group_name not in reference_names:
-                            missing_groups.add(group_name)
-        if missing_groups:
-            detail = ", ".join(sorted(missing_groups)[:8])
-            raise RuntimeError(f"FP 头部存在 source skeleton 未定义的加权顶点组: {detail}")
-        return
-
-    current_bones = gbfr_model_export_v2.ordered_export_bones(root, reference)
-    current_index_by_name = {bone.name: index for index, bone in enumerate(current_bones)}
+    reference_index_by_name = {
+        reference.Body(index).Name().decode("utf-8"): index
+        for index in range(reference.BodyLength())
+    }
+    current_by_export_name = {}
     problems = []
-    if len(current_bones) < reference.BodyLength():
-        problems.append(f"骨骼数量 {len(current_bones)} 少于源骨架 {reference.BodyLength()}")
+    for bone in root.data.bones:
+        export_name = gbfr_model_export_v2.export_bone_name(bone)
+        previous = current_by_export_name.get(export_name)
+        if previous is not None:
+            problems.append(f"导出骨骼名重复: {previous.name} / {bone.name} -> {export_name}")
+        else:
+            current_by_export_name[export_name] = bone
 
-    for index in range(min(len(current_bones), reference.BodyLength())):
+    for index in range(reference.BodyLength()):
         source_bone = reference.Body(index)
         source_name = source_bone.Name().decode("utf-8")
-        current_bone = current_bones[index]
-        current_name = gbfr_model_export_v2.export_bone_name(current_bone)
-        current_parent = current_index_by_name[current_bone.parent.name] if current_bone.parent else 65535
-        if current_name != source_name:
-            problems.append(f"索引 {index}: 源骨骼 {source_name}，当前为 {current_name}")
+        current_bone = current_by_export_name.get(source_name)
+        if current_bone is None:
+            if not preserve_missing_reference_bones:
+                problems.append(f"缺少源骨骼: 索引 {index} {source_name}")
+            continue
+        if current_bone.parent is None:
+            current_parent = 65535
+        else:
+            current_parent_name = gbfr_model_export_v2.export_bone_name(current_bone.parent)
+            current_parent = reference_index_by_name.get(current_parent_name, -1)
         if current_parent != source_bone.ParentId():
             problems.append(
                 f"索引 {index} ({source_name}): 源父索引 {source_bone.ParentId()}，当前为 {current_parent}"
             )
         if len(problems) >= 8:
             break
+
+    missing_weight_bones = set()
+    for lod_object in root.children:
+        for mesh_object in lod_object.children:
+            if mesh_object.type != "MESH":
+                continue
+            for vertex in mesh_object.data.vertices:
+                for influence in vertex.groups:
+                    if influence.weight <= 0.0 or influence.group >= len(mesh_object.vertex_groups):
+                        continue
+                    group_name = mesh_object.vertex_groups[influence.group].name
+                    if root.data.bones.get(group_name) is None:
+                        missing_weight_bones.add(group_name)
+    if missing_weight_bones:
+        detail = ", ".join(sorted(missing_weight_bones)[:8])
+        problems.append(f"加权顶点组没有真实骨骼对象: {detail}")
 
     if problems:
         detail = "；".join(problems)
@@ -398,7 +405,7 @@ class ExportSomeData(Operator, ImportHelper):
         box.label(text="不会写入 build；minfo 由 v2 构建器直接生成", icon="INFO")
         if targets.reference_skeleton is not None:
             if targets.model_id.lower().startswith("fp"):
-                box.label(text="FP 头部直接保留 source skeleton；Blender 缺失的非蒙皮占位骨不会阻止导出", icon="LOCKED")
+                box.label(text="FP 保留 source 骨号与缺失占位槽；当前 Blender rest 位置/旋转会写入", icon="LOCKED")
             else:
                 box.label(text="源骨骼索引保持不变；融合新增骨骼统一追加到末尾", icon="LOCKED")
         if self.experimental_rename_new_bones:
@@ -429,7 +436,7 @@ class ExportSomeData(Operator, ImportHelper):
                 _validate_skeleton_contract(
                     root,
                     targets.reference_skeleton,
-                    preserve_reference_skeleton=targets.model_id.lower().startswith("fp"),
+                    preserve_missing_reference_bones=targets.model_id.lower().startswith("fp"),
                 )
             cloth_repairs = (0, 0, 0)
             if cloth_armature is not None:
@@ -460,7 +467,7 @@ class ExportSomeData(Operator, ImportHelper):
                     True,
                     reference_skeleton_path=targets.reference_skeleton,
                     experimental_rename_new_bones=self.experimental_rename_new_bones,
-                    preserve_reference_skeleton=targets.model_id.lower().startswith("fp"),
+                    preserve_missing_reference_bones=targets.model_id.lower().startswith("fp"),
                 )
                 staged_cloth = ()
                 if cloth_armature is not None:
