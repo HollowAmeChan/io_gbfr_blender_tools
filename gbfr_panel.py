@@ -592,6 +592,10 @@ class ButtonLimitAndNormalizeAllWeights(bpy.types.Operator):
 		try:
 			mesh = context.active_object
 			utils_limit_and_normalize_weights(mesh, self.limit_number)
+			# The export panel caches its last audit result. Refresh it after this
+			# operator changes weights so the warning cannot show stale counts.
+			from .gbfr_export import _run_export_weight_check
+			_run_export_weight_check(context)
 			self.report({'INFO'}, f"Weights normalized and limited to {self.limit_number} groups per vertex.")
 		except Exception as err:
 			print(f"{err}")

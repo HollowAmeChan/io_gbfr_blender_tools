@@ -58,4 +58,13 @@ assert session.gbfr_session.weight_check_unnormalized == 0
 assert session.gbfr_session.weight_check_over_four == 1
 assert "WeightProbe" in session.gbfr_session.weight_check_details
 
+bpy.ops.object.select_all(action="DESELECT")
+mesh.select_set(True)
+bpy.context.view_layer.objects.active = mesh
+bpy.ops.mesh.limit_and_normalize_weights(limit_number=4)
+assert session.gbfr_session.weight_check_completed
+assert session.gbfr_session.weight_check_unnormalized == 0
+assert session.gbfr_session.weight_check_over_four == 0
+assert session.gbfr_session.weight_check_details == ""
+
 print("GBFR export weight check smoke passed")
