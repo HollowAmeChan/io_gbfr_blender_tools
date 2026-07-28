@@ -125,8 +125,9 @@ for mesh in meshes:
     assert Path(mesh["gbfr_material_json"]).name == "0.mmat.json"
     for material in mesh.data.materials:
         node_types = {node.bl_idname for node in material.node_tree.nodes}
-        assert {"ShaderNodeTexImage", "ShaderNodeEmission", "ShaderNodeBsdfTransparent", "ShaderNodeMixShader"} <= node_types
-        assert material.surface_render_method == "BLENDED"
+        assert {"ShaderNodeTexImage", "ShaderNodeEmission", "ShaderNodeOutputMaterial"} <= node_types
+        assert "ShaderNodeBsdfTransparent" not in node_types
+        assert "ShaderNodeMixShader" not in node_types
         texture_path = material.get("gbfr_albedo_dds") or material.get("gbfr_eye_conjunctiva_dds")
         assert texture_path and Path(texture_path).suffix.casefold() == ".dds"
 from io_gbfr_blender_tools import gbfr_cloth_blender

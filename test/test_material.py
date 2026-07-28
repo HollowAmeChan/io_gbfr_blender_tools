@@ -16,24 +16,34 @@ from gbfr_material import (
 
 
 class MaterialTests(unittest.TestCase):
-    def test_reads_base_albedo_and_alpha_flag(self):
+    def test_reads_current_material_schema(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "0.mmat.json"
-            path.write_text(json.dumps({"Entries1": [
+            path.write_text(json.dumps({"materials": [
                 {
-                    "A1": [{"ID": ENABLE_ALPHA_PARAMETER_ID, "ID2": 1}],
-                    "A2": [{"ID": ALBEDO_TEXTURE_SLOT_ID, "Name": "pl9999_body_lod0_albd"}],
+                    "shader_params": [{
+                        "param_hash": "g_53F49792_EnableAlpha_GUESSED",
+                        "value_or_offset": 1,
+                    }],
+                    "texture_maps": [{
+                        "shader_map_name_hash": "g_AlbedoMap",
+                        "texture_name": "pl9999_body_lod0_albd",
+                    }],
                 },
                 {
-                    "A1": [],
-                    "A2": [{"ID": ALBEDO_TEXTURE_SLOT_ID, "Name": "pl9999_body_lod0_c01_albd"}],
+                    "shader_params": [],
+                    "texture_maps": [{
+                        "shader_map_name_hash": "g_AlbedoMap",
+                        "texture_name": "pl9999_body_lod0_c01_albd",
+                    }],
                 },
                 {
-                    "A1": [],
-                    "A2": [
-                        {"ID": EYE_CONJUNCTIVA_TEXTURE_SLOT_ID, "Name": "eye_base"},
-                        {"ID": EYE_IRIS_TEXTURE_SLOT_ID, "Name": "eye_iris"},
-                        {"ID": EYE_HIGHLIGHT_TEXTURE_SLOT_ID, "Name": "eye_highlight"},
+                    "shader_params": [],
+                    "texture_maps": [
+                        {"shader_map_name_hash": "g_EyeWhiteTexture", "texture_name": "eye_base"},
+                        {"shader_map_name_hash": "g_EyeIrisTexture", "texture_name": "eye_iris"},
+                        {"shader_map_name_hash": "g_EyeHighLightTexture", "texture_name": "eye_highlight"},
+                        {"shader_map_name_hash": "g_UnknownMap", "texture_name": "do_not_guess"},
                     ],
                 },
             ]}), encoding="utf-8")
@@ -43,6 +53,17 @@ class MaterialTests(unittest.TestCase):
             self.assertIsNone(definitions[1].albedo_name)
             self.assertTrue(definitions[2].is_eye_material)
             self.assertTrue(is_color_variant_texture("pl9999_body_lod0_c01_albd"))
+
+    def test_reads_legacy_material_schema(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "0.mmat.json"
+            path.write_text(json.dumps({"Entries1": [{
+                "A1": [{"ID": ENABLE_ALPHA_PARAMETER_ID, "ID2": 1}],
+                "A2": [{"ID": ALBEDO_TEXTURE_SLOT_ID, "Name": "legacy_albd"}],
+            }]}), encoding="utf-8")
+            definitions = load_material_definitions(path)
+            self.assertEqual("legacy_albd", definitions[0].albedo_name)
+            self.assertTrue(definitions[0].alpha_enabled)
 
     def test_resolves_granite_before_texture_and_plain_before_suffix(self):
         with tempfile.TemporaryDirectory() as temporary:
