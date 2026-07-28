@@ -118,6 +118,22 @@ MOT 保存的是相对父骨的绝对局部变换，Blender Action 编辑的是�
 
 MOT 面板常驻提醒：修改 Blender rest 后，应先执行模型“导出到工作区”，再编辑或导出动画，使 `unpack .skeleton` 与 MOT 使用同一基准。该提醒不锁定 Action 的导入、编辑、验证、导出或回导；基准是否正确由用户当前工作流负责。
 
+### 当前 MOT 的选中骨换基
+
+修改脸骨 rest 后，旧 MOT 中的位置轨道仍是旧 skeleton 下的绝对局部位置。若直接配合新 skeleton 使用，动画会把骨骼拉回旧位置。此时在当前 MOT 详情中使用“选中骨换基”：
+
+1. 先把当前 Blender 骨架“导出到工作区”，确保 unpack skeleton 已保存新的 rest。
+2. 在 MOT 列表中选中一条需要检查的动画。
+3. 在 Armature 上选择这条动画需要迁移的骨骼，然后点击“选中骨换基”。
+4. 插件只改当前这一条 MOT 对应 Base Action 中的选中骨；未选骨、其他 MOT 和磁盘文件都不改。
+5. 在 Blender 中逐帧检查并继续手修，确认后再执行“验证 MOT”和“导出到 unpack”。
+
+若当前 MOT 尚无 Base Action，该命令会先从 source MOT 创建 Action，再进行换基。换基按每帧完整局部矩阵计算，不只是平移减去一个固定偏移；已有 Base 手修差值和独立 Edit 层都会保留。Action 会记录导入基准版本和已经处理的骨号，同一条 MOT 对同一骨重复点击只会提示已完成，不会再次偏移。
+
+当前 Blender 会话始终以导入时的 `.minfo` 为定位中心：插件从该 minfo 所在目录逐级向上查找 `workspace.json`，再按 minfo 文件名对应的模型记录分别读取 reference/source skeleton 与 unpack skeleton，不依赖会话中缓存的 workspace 路径。只有旧式目录确实没有 `workspace.json` 时，才兼容按 minfo 所在的 `source` / `unpack` 平行目录定位另一侧骨架。若 source skeleton 不存在，或缺少当前 MOT 所需的可编辑骨号，命令会停止并保持原 Action，不会退回 Blender 当前 rest 猜测结果。
+
+该命令有意不批量处理全部 MOT。每条表情动画包含的轨道和实际效果不同，需要逐条筛选骨骼、换基和验收。若 Base Action 已经从导出的 unpack MOT 回导，它已经处于新 skeleton 基准，命令会拒绝再次换基。旧版插件保存且没有基准版本标记的 Action 也不会自动猜测；先保留需要的手修备份，再移除该 Base 并从 source MOT 重新导入。选中骨必须继续使用插件生成的 Quaternion TRS 曲线，改成 Euler 旋转的骨会明确报错，避免忽略手修曲线。
+
 载入 Action 时，每一帧先执行：
 
 ```text
@@ -194,6 +210,7 @@ MOT 列表的每行显示文件名、帧数、轨道数和状态，并只放置�
 
 面板另提供当前动画级命令：
 
+- “选中骨换基”：只对当前 MOT 的选中骨迁移旧 rest 下的动画，生成或更新 Base Action，不直接写文件。
 - “验证 MOT”：只读检查，不写文件。
 - “添加编辑层”：为当前动画创建唯一一条 Edit Action。
 - “合并编辑层”：逐帧烘焙 Base + Edit 为新的 Base Action，成功后移除 Edit。

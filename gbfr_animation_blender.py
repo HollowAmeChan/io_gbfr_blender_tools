@@ -17,10 +17,12 @@ from .gbfr_animation import (
     AnimationClip, guess_mot_annotation, load_mot, read_mot_header,
     write_mot_template_atomic,
 )
+from .gbfr_bone_selection import selected_bone_names
 from .Entities.ModelSkeleton import ModelSkeleton
 from .gbfr_session import active_session_armature
 from .gbfr_workspace import (
-    ModelBundle, resolve_model_bundle, resolve_model_export_targets,
+    ModelBundle, WorkspaceError, find_workspace_json, resolve_model_bundle,
+    resolve_model_export_targets,
 )
 
 
@@ -30,6 +32,11 @@ _APPLYING = False
 _ACTION_ROLE = "gbfr_mot_role"
 _ACTION_SESSION = "gbfr_mot_session"
 _ACTION_FILENAME = "gbfr_mot_filename"
+_ACTION_REBASED_BONES = "gbfr_mot_rebased_bones"
+_ACTION_BASIS_KIND = "gbfr_mot_basis_kind"
+_ACTION_REVISION = "gbfr_mot_revision"
+_BASIS_SOURCE_ABSOLUTE = "SOURCE_ABSOLUTE_PREVIEW_V1"
+_BASIS_UNPACK_CURRENT = "UNPACK_CURRENT_REST_V1"
 _ROLE_BASE = "BASE"
 _ROLE_EDIT = "EDIT"
 _MANAGED_NLA_PREFIX = "[GBFR MOT]"
@@ -108,15 +115,29 @@ def _active_entry(state):
     return state.animations[index]
 
 
+def _action_revision(action) -> int:
+    if action is None:
+        return 0
+    try:
+        return max(0, int(action.get(_ACTION_REVISION, 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _set_action_revision(action, revision: int) -> None:
+    action[_ACTION_REVISION] = max(0, int(revision))
+
+
 def _find_saved_action(state, filename: str, role: str):
-    for action in bpy.data.actions:
+    candidates = [
+        action for action in bpy.data.actions
         if (
             action.get(_ACTION_SESSION) == state.cache_key
             and action.get(_ACTION_FILENAME) == filename
             and action.get(_ACTION_ROLE) == role
-        ):
-            return action
-    return None
+        )
+    ]
+    return max(candidates, key=_action_revision, default=None)
 
 
 def _tag_action(action, state, entry, role: str) -> None:
@@ -128,6 +149,39 @@ def _tag_action(action, state, entry, role: str) -> None:
     action["gbfr_mot_unpack_path"] = entry.unpack_path
     action["gbfr_mot_model_id"] = state.model_id
     action["gbfr_mot_frame_count"] = int(entry.frame_count)
+    _set_action_revision(action, _action_revision(action))
+
+
+def _action_rebased_bones(action) -> set[int]:
+    if action is None:
+        return set()
+    try:
+        return {int(value) for value in action.get(_ACTION_REBASED_BONES, ())}
+    except (TypeError, ValueError):
+        return set()
+
+
+def _set_action_rebased_bones(action, bone_ids) -> None:
+    action[_ACTION_REBASED_BONES] = sorted({int(value) for value in bone_ids})
+
+
+def _set_action_basis_kind(action, kind: str) -> None:
+    action[_ACTION_BASIS_KIND] = kind
+
+
+def _action_basis_kind(action) -> str:
+    return str(action.get(_ACTION_BASIS_KIND, "")) if action is not None else ""
+
+
+def _copy_action_conversion_metadata(source, destination) -> None:
+    rebased = _action_rebased_bones(source)
+    if rebased:
+        _set_action_rebased_bones(destination, rebased)
+    basis_kind = _action_basis_kind(source)
+    if basis_kind:
+        _set_action_basis_kind(destination, basis_kind)
+    if source is not None:
+        _set_action_revision(destination, _action_revision(source) + 1)
 
 
 def _bone_map(armature):
@@ -139,18 +193,90 @@ def _bone_map(armature):
     return result
 
 
+def _selected_bone_ids(context, armature) -> set[int]:
+    result = set()
+    for name in selected_bone_names(context, armature):
+        bone = armature.data.bones.get(name)
+        if bone is None:
+            continue
+        bone_id = bone.get("gbfr_bone_id")
+        if bone_id is not None and int(bone_id) >= 0:
+            result.add(int(bone_id))
+    return result
+
+
 def _current_game_rest_matrix(bone):
     if bone.parent is not None:
         return bone.parent.matrix_local.inverted_safe() @ bone.matrix_local
     return Matrix.Rotation(-math.pi / 2.0, 4, "X") @ bone.matrix_local
 
 
+def _animation_minfo_path(armature) -> Path | None:
+    state = armature.gbfr_animation
+    if not state.minfo_path.strip():
+        return None
+    return Path(
+        bpy.path.abspath(state.minfo_path)
+    ).expanduser().resolve()
+
+
+def _legacy_skeleton_path_from_minfo(minfo: Path, area: str) -> Path | None:
+    desired = "source" if area == "source" else "unpack"
+    opposite = "unpack" if desired == "source" else "source"
+    parts = list(minfo.parts)
+    lowered = [part.casefold() for part in parts]
+    if desired in lowered:
+        return minfo.with_suffix(".skeleton")
+    if opposite in lowered:
+        mapped = list(parts)
+        mapped[lowered.index(opposite)] = desired
+        return Path(*mapped).with_suffix(".skeleton")
+    return None
+
+
 def _workspace_skeleton_path(armature, area):
     state = armature.gbfr_animation
-    if not state.workspace_path.strip() or not state.model_id.strip():
+    minfo = _animation_minfo_path(armature)
+    if minfo is None:
         return None
-    targets = resolve_model_export_targets(state.workspace_path, state.model_id)
-    return targets.skeleton if area == "unpack" else targets.reference_skeleton
+    try:
+        workspace = find_workspace_json(minfo)
+    except WorkspaceError:
+        return _legacy_skeleton_path_from_minfo(minfo, area)
+
+    try:
+        model_id = minfo.stem
+        targets = resolve_model_export_targets(workspace, model_id)
+        state.workspace_path = str(workspace)
+        state.model_id = model_id
+        return (
+            targets.skeleton
+            if area == "unpack" else targets.reference_skeleton
+        )
+    except WorkspaceError as error:
+        raise ValueError(
+            f"无法从 {minfo.name} 所属 workspace.json 解析 {area} skeleton: {error}"
+        ) from error
+
+
+def _require_workspace_skeleton_rest(armature, area, bone_ids):
+    path = _workspace_skeleton_path(armature, area)
+    label = "source" if area == "source" else "unpack"
+    if path is None or not path.is_file():
+        minfo = _animation_minfo_path(armature)
+        raise ValueError(
+            f"无法从当前 minfo 向上定位的工作区找到 {label} skeleton: "
+            f"minfo={minfo or '未记录'}；skeleton={path or '未解析'}"
+        )
+    rest = _skeleton_rest(path)
+    missing = sorted(set(bone_ids) - set(rest))
+    if missing:
+        names = ", ".join(f"_{bone_id:03x}" for bone_id in missing[:8])
+        suffix = "..." if len(missing) > 8 else ""
+        raise ValueError(
+            f"{label} skeleton 缺少当前 MOT 所需骨骼: {names}{suffix}"
+        )
+    return rest
 
 
 def _skeleton_rest(path):
@@ -367,8 +493,10 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
     state.suspend_updates = True
     state.animations.clear()
     state.minfo_path = str(bundle.minfo)
-    state.workspace_path = str(bundle.workspace_json)
-    state.model_id = bundle.model_id
+    if getattr(bundle, "workspace_json", None) is not None:
+        state.workspace_path = str(bundle.workspace_json)
+    if getattr(bundle, "model_id", None):
+        state.model_id = bundle.model_id
     if not state.cache_key:
         state.cache_key = uuid.uuid4().hex
     category = "表情" if bundle.model_id.startswith("fp") else "身体"
@@ -438,6 +566,71 @@ def _detach_action_stack(armature) -> None:
     animation_data.action_influence = 1.0
 
 
+def _snapshot_animation_stack(armature):
+    animation_data = armature.animation_data
+    if animation_data is None:
+        return None
+    tracks = []
+    for track in animation_data.nla_tracks:
+        if not track.name.startswith(_MANAGED_NLA_PREFIX):
+            continue
+        strips = []
+        for strip in track.strips:
+            strips.append({
+                "name": strip.name,
+                "action": strip.action,
+                "frame_start": float(strip.frame_start),
+                "blend_type": strip.blend_type,
+                "extrapolation": strip.extrapolation,
+                "influence": float(strip.influence),
+                "mute": bool(strip.mute),
+            })
+        tracks.append({
+            "name": track.name,
+            "mute": bool(track.mute),
+            "is_solo": bool(track.is_solo),
+            "lock": bool(track.lock),
+            "strips": strips,
+        })
+    return {
+        "action": animation_data.action,
+        "blend_type": animation_data.action_blend_type,
+        "influence": float(animation_data.action_influence),
+        "tracks": tracks,
+    }
+
+
+def _restore_animation_stack(armature, snapshot) -> None:
+    if snapshot is None:
+        if armature.animation_data is not None:
+            armature.animation_data_clear()
+        return
+    animation_data = armature.animation_data_create()
+    animation_data.action = None
+    _clear_managed_nla(animation_data)
+    for saved_track in snapshot["tracks"]:
+        track = animation_data.nla_tracks.new()
+        track.name = saved_track["name"]
+        track.mute = saved_track["mute"]
+        track.is_solo = saved_track["is_solo"]
+        track.lock = saved_track["lock"]
+        for saved_strip in saved_track["strips"]:
+            action = saved_strip["action"]
+            if action is None:
+                continue
+            strip = track.strips.new(
+                saved_strip["name"], int(saved_strip["frame_start"]), action,
+            )
+            strip.name = saved_strip["name"]
+            strip.blend_type = saved_strip["blend_type"]
+            strip.extrapolation = saved_strip["extrapolation"]
+            strip.influence = saved_strip["influence"]
+            strip.mute = saved_strip["mute"]
+    animation_data.action = snapshot["action"]
+    animation_data.action_blend_type = snapshot["blend_type"]
+    animation_data.action_influence = snapshot["influence"]
+
+
 def _bind_entry_action(armature, entry, scene) -> None:
     base = _entry_action(entry)
     if base is None:
@@ -495,6 +688,119 @@ def _add_action_curve(action, data_path: str, index: int, values, group: str) ->
     for point in curve.keyframe_points:
         point.interpolation = "LINEAR"
     curve.update()
+
+
+def _action_curve(action, data_path: str, index: int):
+    return action.fcurves.find(data_path, index=index)
+
+
+def _action_bone_basis_samples(action, pose_bone, frame_count: int):
+    if pose_bone.rotation_mode != "QUATERNION":
+        raise ValueError(
+            f"骨骼 {pose_bone.name} 当前使用 {pose_bone.rotation_mode} 旋转模式；"
+            "请先转为 Quaternion 并确认曲线后再换基"
+        )
+    location_path = pose_bone.path_from_id("location")
+    rotation_path = pose_bone.path_from_id("rotation_quaternion")
+    scale_path = pose_bone.path_from_id("scale")
+    location_curves = tuple(_action_curve(action, location_path, index) for index in range(3))
+    rotation_curves = tuple(_action_curve(action, rotation_path, index) for index in range(4))
+    scale_curves = tuple(_action_curve(action, scale_path, index) for index in range(3))
+    if not all((*location_curves, *rotation_curves, *scale_curves)):
+        raise ValueError(f"Base Action 缺少骨骼 {pose_bone.name} 的完整 TRS 曲线")
+    result = []
+    for frame in range(frame_count):
+        location = Vector(tuple(curve.evaluate(frame) for curve in location_curves))
+        rotation = Quaternion(tuple(curve.evaluate(frame) for curve in rotation_curves))
+        if sum(component * component for component in rotation) < 1e-12:
+            rotation = Quaternion((1.0, 0.0, 0.0, 0.0))
+        else:
+            rotation.normalize()
+        scale = Vector(tuple(curve.evaluate(frame) for curve in scale_curves))
+        result.append(Matrix.LocRotScale(location, rotation, scale))
+    return tuple(result)
+
+
+def _replace_action_bone_samples(action, pose_bone, samples) -> None:
+    location_path = pose_bone.path_from_id("location")
+    rotation_path = pose_bone.path_from_id("rotation_quaternion")
+    scale_path = pose_bone.path_from_id("scale")
+    managed_paths = {location_path, rotation_path, scale_path}
+    for curve in tuple(action.fcurves):
+        if curve.data_path in managed_paths:
+            action.fcurves.remove(curve)
+    locations, rotations, scales = samples
+    for index in range(3):
+        _add_action_curve(
+            action, location_path, index,
+            [value[index] for value in locations], pose_bone.name,
+        )
+    for index in range(4):
+        _add_action_curve(
+            action, rotation_path, index,
+            [value[index] for value in rotations], pose_bone.name,
+        )
+    for index in range(3):
+        _add_action_curve(
+            action, scale_path, index,
+            [value[index] for value in scales], pose_bone.name,
+        )
+
+
+def _project_trs(matrix):
+    location, rotation, scale = matrix.decompose()
+    rotation.normalize()
+    return Matrix.LocRotScale(location, rotation, scale)
+
+
+def _selected_bone_rebase_samples(
+    armature, action, clip, selected_bone_ids, source_skeleton_rest,
+):
+    runtime = _make_runtime(armature, clip, rest_area="source")
+    already_rebased = _action_rebased_bones(action)
+    result = {}
+    processed = set()
+    for bone_id in sorted(set(selected_bone_ids) - already_rebased):
+        tracks = runtime["tracks"].get(bone_id)
+        bone_name = runtime["mapping"].get(bone_id)
+        source = runtime["rest"].get(bone_id)
+        pose_bone = armature.pose.bones.get(bone_name) if bone_name else None
+        if not tracks or source is None or pose_bone is None:
+            continue
+        source_values = source_skeleton_rest[bone_id]
+        source_rest = Matrix.LocRotScale(
+            Vector(source_values["position"]), Quaternion(source_values["rotation"]),
+            Vector(source_values["scale"]),
+        )
+        current_rest = source["rest_matrix"]
+        current_inverse = current_rest.inverted_safe()
+        source_inverse = source_rest.inverted_safe()
+        actual_samples = _action_bone_basis_samples(
+            action, pose_bone, clip.frame_count,
+        )
+        locations = []
+        rotations = []
+        scales = []
+        previous_rotation = None
+        for frame, actual_basis in enumerate(actual_samples):
+            source_local = _sample_local_matrix(source, tracks, frame)
+            absolute_preview_basis = _project_trs(current_inverse @ source_local)
+            relative_source_basis = _project_trs(source_inverse @ source_local)
+            manual_delta = absolute_preview_basis.inverted_safe() @ actual_basis
+            rebased_basis = _project_trs(relative_source_basis @ manual_delta)
+            location, rotation, scale = rebased_basis.decompose()
+            rotation.normalize()
+            if previous_rotation is not None:
+                rotation.make_compatible(previous_rotation)
+            previous_rotation = rotation.copy()
+            locations.append(tuple(location))
+            rotations.append(tuple(rotation))
+            scales.append(tuple(scale))
+        result[bone_id] = (
+            pose_bone, (locations, rotations, scales),
+        )
+        processed.add(bone_id)
+    return result, processed, already_rebased & set(selected_bone_ids)
 
 
 def _create_action_from_basis_samples(
@@ -721,7 +1027,11 @@ def _entry_unpack_path(armature, entry) -> Path:
     state = armature.gbfr_animation
     if not state.minfo_path.strip():
         raise ValueError("当前动画会话没有 minfo 路径；请刷新工作区后重试")
-    bundle = resolve_model_bundle(state.minfo_path, state.workspace_path or None)
+    bundle = resolve_model_bundle(state.minfo_path)
+    if getattr(bundle, "workspace_json", None) is not None:
+        state.workspace_path = str(bundle.workspace_json)
+    if getattr(bundle, "model_id", None):
+        state.model_id = bundle.model_id
     asset = next(
         (
             candidate for candidate in bundle.animations
@@ -795,10 +1105,18 @@ class GBFR_OT_AnimationImportAction(Operator):
             action = _entry_action(entry)
             if action is None:
                 clip = load_mot(_entry_template_path(entry))
-                samples, passthrough = _clip_basis_samples(armature, clip)
+                rest_area = _rest_area_for_clip(armature, clip)
+                samples, passthrough = _clip_basis_samples(
+                    armature, clip, rest_area=rest_area,
+                )
                 _stop_preview(armature)
                 action = _create_action_from_basis_samples(
                     armature, state, entry, samples, _ROLE_BASE, "Base",
+                )
+                _set_action_basis_kind(
+                    action,
+                    _BASIS_SOURCE_ABSOLUTE
+                    if rest_area == "source" else _BASIS_UNPACK_CURRENT,
                 )
                 created = action
                 entry.action_name = action.name
@@ -829,6 +1147,220 @@ class GBFR_OT_AnimationImportAction(Operator):
             if previous is not None and _entry_action(previous) is not None:
                 _bind_entry_action(armature, previous, context.scene)
             state.last_status = str(error)
+            self.report({"ERROR"}, state.last_status)
+            return {"CANCELLED"}
+
+
+class GBFR_OT_AnimationRebaseSelectedBones(Operator):
+    bl_idname = "gbfr.animation_rebase_selected_bones"
+    bl_label = "选中骨骼换基"
+    bl_description = (
+        "仅处理当前 MOT：把选中骨骼的旧绝对局部动画换算为 source rest 下的"
+        "相对动作，保留 Base 手修差值与 Edit 层；不会写入 MOT 文件"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    animation_index: IntProperty(default=-1)
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_animation
+        index = (
+            self.animation_index
+            if self.animation_index >= 0 else state.active_animation_index
+        )
+        if not 0 <= index < len(state.animations):
+            return {"CANCELLED"}
+        selected_bone_ids = _selected_bone_ids(context, armature)
+        if not selected_bone_ids:
+            self.report({"ERROR"}, "请先在当前骨架中选择至少一根带 GBFR 骨号的骨骼")
+            return {"CANCELLED"}
+
+        entry = state.animations[index]
+        source_path = Path(
+            bpy.path.abspath(_entry_source_preview_path(entry))
+        ).expanduser().resolve()
+        original_action = _entry_action(entry)
+        previous_index = state.active_animation_index
+        previous_active_action_name = state.active_action_name
+        previous_animation_stack = _snapshot_animation_stack(armature)
+        previous_runtime = _ACTIVE_CLIPS.get(state.cache_key)
+        previous_preview = (
+            state.preview_active,
+            state.export_preview_active,
+            state.export_preview_entry_name,
+        )
+        scene = context.scene
+        previous_scene = (
+            scene.render.fps, scene.render.fps_base,
+            scene.frame_start, scene.frame_end, scene.frame_current,
+        )
+        old_entry_values = {
+            "template_path": entry.template_path,
+            "action_name": entry.action_name,
+            "passthrough_track_count": entry.passthrough_track_count,
+            "validation_status": entry.validation_status,
+        }
+        working_action = None
+        created_from_source = False
+        binding_changed = False
+        passthrough = ()
+        try:
+            if not source_path.is_file():
+                raise ValueError(f"source MOT 不存在: {source_path}")
+            clip = load_mot(source_path)
+            mapping = _bone_map(armature)
+            supported = {0, 1, 2, 3, 4, 5, 7, 8, 9}
+            required_bone_ids = {
+                0x900 if track.bone_id == -1 else int(track.bone_id)
+                for track in clip.tracks
+                if track.property in supported
+                and (0x900 if track.bone_id == -1 else int(track.bone_id)) in mapping
+            }
+            source_skeleton_rest = _require_workspace_skeleton_rest(
+                armature, "source", required_bone_ids,
+            )
+            if original_action is not None:
+                template_path = Path(
+                    bpy.path.abspath(_entry_template_path(entry))
+                ).expanduser().resolve()
+                if template_path != source_path:
+                    raise ValueError(
+                        "当前 Base Action 已使用 unpack MOT 作为模板；请从 source 重新导入后再换基，"
+                        "避免重复处理"
+                    )
+                basis_kind = _action_basis_kind(original_action)
+                if basis_kind != _BASIS_SOURCE_ABSOLUTE:
+                    if not basis_kind:
+                        raise ValueError(
+                            "当前 Base Action 来自旧版插件，缺少基准版本；为避免二次换基，"
+                            "请移除该 Action 并从 source MOT 重新导入"
+                        )
+                    raise ValueError(
+                        f"当前 Base Action 的基准类型不支持换基: {basis_kind}"
+                    )
+                source_action = original_action
+            else:
+                samples, passthrough = _clip_basis_samples(
+                    armature, clip, rest_area="source",
+                )
+                source_action = _create_action_from_basis_samples(
+                    armature, state, entry, samples, _ROLE_BASE, "Base",
+                )
+                _set_action_basis_kind(source_action, _BASIS_SOURCE_ABSOLUTE)
+                working_action = source_action
+                created_from_source = True
+
+            replacements, processed, already_rebased = _selected_bone_rebase_samples(
+                armature, source_action, clip, selected_bone_ids,
+                source_skeleton_rest,
+            )
+            if not processed:
+                if working_action is not None:
+                    bpy.data.actions.remove(working_action)
+                    working_action = None
+                if already_rebased:
+                    state.last_status = (
+                        f"{entry.display_name}：选中的 {len(already_rebased)} 根骨骼已经完成换基"
+                    )
+                    self.report({"INFO"}, state.last_status)
+                    return {"FINISHED"}
+                raise ValueError("当前 MOT 没有选中骨骼可换基的受支持轨道")
+
+            if not created_from_source:
+                working_action = original_action.copy()
+                revision = _action_revision(original_action) + 1
+                working_action.name = (
+                    f"GBFR MOT | {state.model_id} | {entry.display_name} | Base R{revision}"
+                )
+            for _bone_id, (pose_bone, samples) in replacements.items():
+                _replace_action_bone_samples(working_action, pose_bone, samples)
+            _set_action_rebased_bones(
+                working_action,
+                _action_rebased_bones(source_action) | processed,
+            )
+            _tag_action(working_action, state, entry, _ROLE_BASE)
+            _set_action_revision(
+                working_action,
+                _action_revision(original_action) + 1
+                if original_action is not None else 0,
+            )
+            working_action["gbfr_mot_passthrough_tracks"] = (
+                len(passthrough) if created_from_source
+                else int(original_action.get("gbfr_mot_passthrough_tracks", 0))
+            )
+
+            entry.action_name = working_action.name
+            entry.passthrough_track_count = int(
+                working_action.get("gbfr_mot_passthrough_tracks", 0)
+            )
+            state.suspend_updates = True
+            state.active_animation_index = index
+            state.suspend_updates = False
+            binding_changed = True
+            _bind_entry_action(armature, entry, context.scene)
+            entry.validation_status = f"已换基 {len(processed)} 根选中骨骼"
+            skipped = len(already_rebased)
+            state.last_status = (
+                f"{entry.display_name}：已把 {len(processed)} 根选中骨骼换到当前 rest 基准"
+            )
+            if skipped:
+                state.last_status += f"；跳过 {skipped} 根已处理骨骼"
+            state.last_status += "；原 MOT 尚未写入"
+
+            if original_action is not None:
+                if original_action.users == 0:
+                    try:
+                        bpy.data.actions.remove(original_action)
+                    except RuntimeError as cleanup_error:
+                        state.last_status += f"；旧 Action 未清理: {cleanup_error}"
+                else:
+                    state.last_status += "；共享旧 Action 保持不变"
+            self.report({"INFO"}, state.last_status)
+            return {"FINISHED"}
+        except Exception as error:
+            rollback_error = None
+            if binding_changed:
+                _detach_action_stack(armature)
+            for name, value in old_entry_values.items():
+                setattr(entry, name, value)
+            if (
+                working_action is not None
+                and working_action != original_action
+                and bpy.data.actions.get(working_action.name) is not None
+            ):
+                bpy.data.actions.remove(working_action)
+            state.suspend_updates = True
+            state.active_animation_index = previous_index
+            state.suspend_updates = False
+            if binding_changed:
+                try:
+                    _restore_animation_stack(armature, previous_animation_stack)
+                    if previous_runtime is not None:
+                        _ACTIVE_CLIPS[state.cache_key] = previous_runtime
+                    else:
+                        _ACTIVE_CLIPS.pop(state.cache_key, None)
+                    (
+                        state.preview_active,
+                        state.export_preview_active,
+                        state.export_preview_entry_name,
+                    ) = previous_preview
+                    state.active_action_name = previous_active_action_name
+                except Exception as restore_error:
+                    rollback_error = restore_error
+                    state.active_action_name = previous_active_action_name
+                fps, fps_base, frame_start, frame_end, frame = previous_scene
+                scene.render.fps = fps
+                scene.render.fps_base = fps_base
+                scene.frame_start = frame_start
+                scene.frame_end = frame_end
+                scene.frame_set(frame)
+            state.suspend_updates = False
+            state.last_status = str(error)
+            if rollback_error is not None:
+                state.last_status += f"；回滚动画栈失败: {rollback_error}"
             self.report({"ERROR"}, state.last_status)
             return {"CANCELLED"}
 
@@ -1048,6 +1580,8 @@ class GBFR_OT_AnimationReimportExported(Operator):
             imported = _create_action_from_basis_samples(
                 armature, state, entry, samples, _ROLE_BASE, "Exported",
             )
+            _copy_action_conversion_metadata(old_base, imported)
+            _set_action_basis_kind(imported, _BASIS_UNPACK_CURRENT)
             imported["gbfr_mot_passthrough_tracks"] = len(passthrough)
             imported["gbfr_mot_imported_from_unpack"] = str(destination)
             imported["gbfr_mot_template_path"] = str(destination)
@@ -1224,6 +1758,7 @@ class GBFR_OT_AnimationMergeEditLayer(Operator):
             merged = _create_action_from_basis_samples(
                 armature, state, entry, samples, _ROLE_BASE, "Merged",
             )
+            _copy_action_conversion_metadata(base, merged)
             merged["gbfr_mot_passthrough_tracks"] = int(
                 entry.passthrough_track_count
             )
@@ -1344,7 +1879,7 @@ class GBFR_OT_AnimationRefresh(Operator):
             state = armature.gbfr_animation
             populate_animation_state(
                 armature,
-                resolve_model_bundle(state.minfo_path, state.workspace_path or None),
+                resolve_model_bundle(state.minfo_path),
             )
         except Exception as error:
             self.report({"ERROR"}, str(error))
@@ -1464,6 +1999,15 @@ class GBFR_PT_AnimationPreview(Panel):
             details = layout.row(align=True)
             details.label(text=item.internal_name or item.display_name, icon="ACTION")
             details.label(text=f"{item.frame_count}帧 · {item.track_count}轨")
+            selected_bone_count = len(_selected_bone_ids(context, armature))
+            rebase_row = layout.row(align=True)
+            rebase_row.enabled = selected_bone_count > 0
+            rebase = rebase_row.operator(
+                "gbfr.animation_rebase_selected_bones",
+                text=f"选中骨换基 ({selected_bone_count})",
+                icon="CON_TRANSFORM",
+            )
+            rebase.animation_index = state.active_animation_index
             if annotation:
                 layout.label(
                     text=f"文件名推测：{annotation}", icon="QUESTION",
@@ -1503,7 +2047,8 @@ class GBFR_PT_AnimationPreview(Panel):
 
 classes = (
     GBFRAnimationEntryProperties, GBFRAnimationStateProperties,
-    GBFR_OT_AnimationImportAction, GBFR_OT_AnimationActivateAction,
+    GBFR_OT_AnimationImportAction, GBFR_OT_AnimationRebaseSelectedBones,
+    GBFR_OT_AnimationActivateAction,
     GBFR_OT_AnimationValidateAction, GBFR_OT_AnimationExportAction,
     GBFR_OT_AnimationToggleExportPreview,
     GBFR_OT_AnimationReimportExported,
