@@ -27,20 +27,20 @@ for bone in bpy.context.object.data.edit_bones:
 
 ## MOT 预览与 Action 编辑
 
-导入面部模型 `.minfo` 后，`GBFR > MOT 动画` 会优先读取当前会话 `workspace.json/AnimationFiles` 中 `ModelId` 完全一致的 MOT。旧工作区没有 `AnimationFiles` 时才兼容扫描 `source/data/fp/fpXXXX` 与 `unpack/data/fp/fpXXXX`。点击列表条目后，插件按 60 FPS 在内存中采样，并直接更新 PoseBone `matrix_basis`。
+导入面部模型 `.minfo` 后，`GBFR > MOT 动画` 会优先读取当前会话 `workspace.json/AnimationFiles` 中 `ModelId` 完全一致的 MOT。旧工作区没有 `AnimationFiles` 时才兼容扫描 `source/data/fp/fpXXXX` 与 `unpack/data/fp/fpXXXX`。普通列表播放使用 `source MOT + source skeleton`；“预览导出 MOT”使用 `unpack MOT + unpack skeleton`。两种模式最后都把各自游戏局部姿态映射到当前 Blender rest，因此不能混用另一侧的 skeleton offset。
 
 源文件预览仍有以下限制：
 
 - 预览不会创建 Action、关键帧、Animation Slot 或 NLA Track。
-- 在源预览状态下手工插入的 Pose 关键帧不是当前 MOT 的可写回副本；需要先点击该行的“导入 Action”。
+- 在直接预览状态下手工插入的 Pose 关键帧不是当前 MOT 的可写回副本；需要先点击该行的“导入 Action”。
 - “停止并恢复静止姿态”会清除内存剪辑并恢复 rest pose。
 - 模型的“导出到工作区”不会修改或导出 MOT。
 
-源 MOT 预览与 Action 编辑保持会话级互斥。当前会话没有任何已导入 Action 时，列表下方沿用源 MOT 播放；一旦导入第一个 Action，插件立即停止源预览、清除内存剪辑并恢复静止姿态，随后禁用旧的源文件播放路径。只要会话仍保留任意 MOT Action，播放按钮就只驱动 Blender 时间轴和当前 Action/NLA，不能再次让帧回调直接覆盖 `matrix_basis`。删除会话中的全部 MOT Action 后，源 MOT 预览才重新启用。
+MOT 直接预览与 Action 编辑保持会话级互斥。当前会话没有任何已导入 Action 时，列表下方播放 source MOT；一旦导入第一个 Action，插件立即停止直接预览、清除内存剪辑并恢复静止姿态。只要会话仍保留任意 MOT Action，播放按钮就只驱动 Blender 时间轴和当前 Action/NLA，不能再次让帧回调直接覆盖 `matrix_basis`。删除会话中的全部 MOT Action 后，source 直接预览才重新启用。
 
 已导出到 unpack 的动画会额外显示“预览导出 MOT”。这是上述互斥规则的显式验证模式：插件临时解除当前 Action/NLA，重新解析磁盘上的 unpack `.mot` 并直接预览实际写出结果；“返回 Action”会恢复原编辑栈。该模式不会删除或重新烘焙 Action，也不会把普通源 MOT 播放重新启用。
 
-“导回 Action”会把 unpack `.mot` 重新解析并逐帧烘焙为新的 Base Action。它用于把已经验证过的游戏文件作为下一轮编辑基线；成功后原 Base 和可选 Edit 会被新 Base 替换。操作执行前要求确认，并且只有新 Action 完成轨道检查和矩阵验证后才删除旧数据。导回后只有 Action 模板路径指向 unpack 文件；普通列表预览始终读取 source MOT。删除全部可编辑 Action 后，不会因曾经导回过文件而继续预览 unpack。
+“导回 Action”会用 `unpack MOT + unpack skeleton` 重新逐帧烘焙 Base Action。普通列表预览与首次导入 Action 仍以 `source MOT + source skeleton` 为基线；两者是有意保留的双模式，不得仅替换 MOT 路径而沿用另一侧 rest。
 
 ## 已确认的 MOT 通道
 
@@ -82,7 +82,7 @@ for bone in bpy.context.object.data.edit_bones:
 6. 点击该行的“导出到 unpack”，只写出这一条动画到当前会话工作区 `AnimationFiles` 登记的 `Input`；旧工作区则使用兼容计算出的 `unpack/data/fp/fpXXXX/<原文件名>.mot`。
 7. GBFR Modtools 再负责把确认后的文件封装到 build，source 原文件始终不覆盖。
 
-列表始终显示全部源 MOT，但不一次性烘焙全部动作。用户可以逐行导入任意多个动画；所有已导入的 Action 同时保存在 `.blend`，无需重新解析即可来回切换。一个 Armature 同一时间只绑定一条动画作为当前编辑目标，其他 Action 保持未绑定状态，不参与求值。
+列表始终显示工作区登记的全部 MOT，但不一次性烘焙全部动作。用户可以逐行导入任意多个动画；所有已导入的 Action 同时保存在 `.blend`，无需重新解析即可来回切换。一个 Armature 同一时间只绑定一条动画作为当前编辑目标，其他 Action 保持未绑定状态，不参与求值。
 
 ### 文件名推测注释
 
@@ -114,7 +114,9 @@ MOT 动画资产
 
 ## Action 与 MOT 的转换
 
-MOT 保存的是相对父骨的绝对局部变换，Blender Action 编辑的是相对 rest pose 的 PoseBone 变换。两者不能直接复制数值。
+MOT 保存的是相对父骨的绝对局部变换，Blender Action 编辑的是相对 rest pose 的 PoseBone 变换。两者不能直接复制数值。source/unpack 模式分别读取同区域 skeleton 作为 MOT 缺轨静止值；Blender 当前骨架只作为显示和编辑坐标系。
+
+MOT 面板常驻提醒：修改 Blender rest 后，应先执行模型“导出到工作区”，再编辑或导出动画，使 `unpack .skeleton` 与 MOT 使用同一基准。该提醒不锁定 Action 的导入、编辑、验证、导出或回导；基准是否正确由用户当前工作流负责。
 
 载入 Action 时，每一帧先执行：
 
@@ -135,7 +137,7 @@ exact_source_basis @ inverse(source_trs_projection) @ edited_pose_basis
 
 这样未修改 Action 写回时不会把 Blender TRS 投影误差污染到 MOT；用户修改则以相对差值写回。验证状态会分别显示 Action 对 TRS 投影的误差和源矩阵本身的 TRS 投影误差。后者不等于 Action 损坏。
 
-第一版将当前模板涉及的骨骼逐帧烘焙到 Action。原因是 rest 旋转参与矩阵换算后，MOT 单轴 Hermite 曲线通常不能无损地直接映射为 Blender 的单轴 F-Curve。逐帧烘焙更占内存，但能保证除上述不可表达剪切外，Blender 中的每个整数帧与源预览一致，并保证未编辑文件的 MOT 采样往返一致。
+第一版将当前模板涉及的骨骼逐帧烘焙到 Action。原因是 rest 旋转参与矩阵换算后，MOT 单轴 Hermite 曲线通常不能无损地直接映射为 Blender 的单轴 F-Curve。逐帧烘焙更占内存，但能保证除上述不可表达剪切外，Blender 中的每个整数帧与所选 source/unpack 模式一致，并保证未编辑文件的 MOT 采样往返一致。
 
 导出时也按整数帧采样：
 
@@ -156,7 +158,7 @@ exact_source_basis @ inverse(source_trs_projection) @ edited_pose_basis
 
 ### 骨名、骨号与新增轨道的已知风险边界
 
-MOT 二进制轨道不保存 Blender 骨名。当前实现用“骨号 + 属性”识别轨道；导入骨架时保存在骨上的 `gbfr_bone_id` 才是 MOT 目标身份。Blender 当前骨名只用于 Action 的 `pose.bones["骨名"]` 曲线路径和镜像编辑。因此，把源骨改成便于镜像的语义名不会改变 MOT 目标，前提是该骨仍保留原来的 `gbfr_bone_id`、`gbfr_rest_position`、`gbfr_rest_quaternion` 和 `gbfr_rest_scale`。`gbfr_original_name` 用于模型和名称往返，不是当前 MOT 写回器查找轨道的依据。
+MOT 二进制轨道不保存 Blender 骨名。当前实现用“骨号 + 属性”识别轨道；导入骨架时保存在骨上的 `gbfr_bone_id` 才是 MOT 目标身份。Blender 当前骨名只用于 Action 的 `pose.bones["骨名"]` 曲线路径和镜像编辑。因此，把源骨改成便于镜像的语义名不会改变 MOT 目标，前提是该骨仍保留原来的 `gbfr_bone_id`。source/unpack rest 直接读取对应 `.skeleton`，`gbfr_original_name` 用于模型和名称往返。
 
 当前支持边界如下：
 

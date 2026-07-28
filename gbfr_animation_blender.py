@@ -17,11 +17,15 @@ from .gbfr_animation import (
     AnimationClip, guess_mot_annotation, load_mot, read_mot_header,
     write_mot_template_atomic,
 )
+from .Entities.ModelSkeleton import ModelSkeleton
 from .gbfr_session import active_session_armature
-from .gbfr_workspace import ModelBundle, resolve_model_bundle
+from .gbfr_workspace import (
+    ModelBundle, resolve_model_bundle, resolve_model_export_targets,
+)
 
 
 _ACTIVE_CLIPS = {}
+_SKELETON_REST_CACHE = {}
 _APPLYING = False
 _ACTION_ROLE = "gbfr_mot_role"
 _ACTION_SESSION = "gbfr_mot_session"
@@ -135,23 +139,86 @@ def _bone_map(armature):
     return result
 
 
-def _bone_rest_data(armature):
+def _current_game_rest_matrix(bone):
+    if bone.parent is not None:
+        return bone.parent.matrix_local.inverted_safe() @ bone.matrix_local
+    return Matrix.Rotation(-math.pi / 2.0, 4, "X") @ bone.matrix_local
+
+
+def _workspace_skeleton_path(armature, area):
+    state = armature.gbfr_animation
+    if not state.workspace_path.strip() or not state.model_id.strip():
+        return None
+    targets = resolve_model_export_targets(state.workspace_path, state.model_id)
+    return targets.skeleton if area == "unpack" else targets.reference_skeleton
+
+
+def _skeleton_rest(path):
+    if path is None or not path.is_file():
+        return {}
+    signature = (path.stat().st_mtime_ns, path.stat().st_size)
+    cached = _SKELETON_REST_CACHE.get(path)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    skeleton = ModelSkeleton.GetRootAs(bytearray(path.read_bytes()), 0)
+    result = {}
+    for index in range(skeleton.BodyLength()):
+        item = skeleton.Body(index)
+        name = item.Name().decode("ascii")
+        if not name.startswith("_"):
+            continue
+        try:
+            bone_id = int(name[1:], 16)
+        except ValueError:
+            continue
+        position = item.Position()
+        rotation = item.Quat()
+        scale = item.Scale()
+        result[bone_id] = {
+            "position": (position.X(), position.Y(), position.Z()),
+            "rotation": (rotation.W(), rotation.X(), rotation.Y(), rotation.Z()),
+            "scale": (scale.X(), scale.Y(), scale.Z()),
+        }
+    _SKELETON_REST_CACHE[path] = (signature, result)
+    return result
+
+
+def _rest_area_for_clip(armature, clip):
+    clip_path = Path(clip.path).expanduser().resolve()
+    for entry in armature.gbfr_animation.animations:
+        if entry.unpack_path:
+            try:
+                if clip_path == Path(bpy.path.abspath(entry.unpack_path)).expanduser().resolve():
+                    return "unpack"
+            except OSError:
+                pass
+    return "source"
+
+
+def _bone_rest_data(armature, area="source"):
+    runtime_rest = _skeleton_rest(_workspace_skeleton_path(armature, area))
     result = {}
     for bone in armature.data.bones:
         bone_id = bone.get("gbfr_bone_id")
-        position = bone.get("gbfr_rest_position")
-        rotation = bone.get("gbfr_rest_quaternion")
-        scale = bone.get("gbfr_rest_scale")
-        if bone_id is None or int(bone_id) < 0 or position is None or rotation is None or scale is None:
+        if bone_id is None or int(bone_id) < 0:
             continue
-        position = tuple(float(value) for value in position)
-        rotation = tuple(float(value) for value in rotation)
-        scale = tuple(float(value) for value in scale)
-        rest_matrix = Matrix.LocRotScale(Vector(position), Quaternion(rotation), Vector(scale))
+        bone_id = int(bone_id)
+        display_rest_matrix = _current_game_rest_matrix(bone)
+        runtime = runtime_rest.get(bone_id)
+        if runtime is None:
+            position, rotation, scale = display_rest_matrix.decompose()
+            rotation.normalize()
+            runtime = {
+                "position": tuple(position),
+                "rotation": tuple(rotation),
+                "scale": tuple(scale),
+            }
         result[int(bone_id)] = {
-            "position": position, "rotation": rotation, "scale": scale,
-            "rest_matrix": rest_matrix,
-            "rest_inverse": rest_matrix.inverted_safe(),
+            "position": runtime["position"],
+            "rotation": runtime["rotation"],
+            "scale": runtime["scale"],
+            "rest_matrix": display_rest_matrix,
+            "rest_inverse": display_rest_matrix.inverted_safe(),
         }
     return result
 
@@ -165,15 +232,19 @@ def _quaternion_to_euler(rotation):
     ]
 
 
-def _make_runtime(armature, clip: AnimationClip):
+def _make_runtime(armature, clip: AnimationClip, rest_area=None):
     mapping = _bone_map(armature)
-    rest = _bone_rest_data(armature)
+    area = rest_area or _rest_area_for_clip(armature, clip)
+    rest = _bone_rest_data(armature, area)
     tracks = defaultdict(list)
     for track in clip.tracks:
         bone_id = 0x900 if track.bone_id == -1 else int(track.bone_id)
         if bone_id in mapping and bone_id in rest and track.property in {0, 1, 2, 3, 4, 5, 7, 8, 9}:
             tracks[bone_id].append(track)
-    return {"clip": clip, "mapping": mapping, "rest": rest, "tracks": dict(tracks)}
+    return {
+        "clip": clip, "mapping": mapping, "rest": rest,
+        "tracks": dict(tracks), "rest_area": area,
+    }
 
 
 def _reset_pose(armature):
@@ -255,11 +326,11 @@ def load_selected_animation(armature, scene):
     if not state.animations:
         raise ValueError("当前模型没有 MOT 动画")
     if _has_imported_actions(state):
-        raise ValueError("当前会话已有可编辑 Action；源 MOT 直接预览已禁用")
+        raise ValueError("当前会话已有可编辑 Action；MOT 直接预览已禁用")
     index = min(max(state.active_animation_index, 0), len(state.animations) - 1)
     entry = state.animations[index]
     clip = load_mot(_entry_source_preview_path(entry))
-    _start_runtime_preview(armature, scene, clip)
+    _start_runtime_preview(armature, scene, clip, rest_area="source")
     state.last_status = (
         f"正在预览 {entry.display_name}：{clip.frame_count} 帧 / {len(clip.tracks)} 轨道"
     )
@@ -267,6 +338,7 @@ def load_selected_animation(armature, scene):
 
 def _start_runtime_preview(
     armature, scene, clip: AnimationClip, *, exported_entry_name: str = "",
+    rest_area=None,
 ) -> None:
     for other in bpy.data.objects:
         if (
@@ -277,7 +349,7 @@ def _start_runtime_preview(
             _stop_preview(other)
     _stop_preview(armature)
     state = armature.gbfr_animation
-    _ACTIVE_CLIPS[state.cache_key] = _make_runtime(armature, clip)
+    _ACTIVE_CLIPS[state.cache_key] = _make_runtime(armature, clip, rest_area)
     state.preview_active = True
     state.export_preview_active = bool(exported_entry_name)
     state.export_preview_entry_name = exported_entry_name
@@ -303,13 +375,14 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
     errors = []
     for asset in bundle.animations:
         try:
-            header = read_mot_header(asset.preview)
+            preview_path = asset.source if asset.source is not None else asset.preview
+            header = read_mot_header(preview_path)
             item = state.animations.add()
             item.name = asset.name
-            item.path = str(asset.preview)
+            item.path = str(preview_path)
             item.source_path = str(asset.source or "")
             item.unpack_path = str(asset.unpack)
-            item.display_name = asset.preview.stem
+            item.display_name = preview_path.stem
             item.internal_name = header.name
             item.guessed_annotation = guess_mot_annotation(asset.name)
             item.frame_count = header.frame_count
@@ -340,7 +413,7 @@ def populate_animation_state(armature: bpy.types.Object, bundle: ModelBundle) ->
         state.active_action_name = ""
     state.last_status = f"已索引 {len(state.animations)} 个{category} MOT"
     if imported:
-        state.last_status += f"；保留 {imported} 个可编辑 Action，源 MOT 直接预览已禁用"
+        state.last_status += f"；保留 {imported} 个可编辑 Action，MOT 直接预览已禁用"
     else:
         state.last_status += "；点击列表按需预览"
     if errors:
@@ -462,8 +535,8 @@ def _create_action_from_basis_samples(
         raise
 
 
-def _clip_basis_samples(armature, clip: AnimationClip):
-    runtime = _make_runtime(armature, clip)
+def _clip_basis_samples(armature, clip: AnimationClip, rest_area=None):
+    runtime = _make_runtime(armature, clip, rest_area)
     supported = {0, 1, 2, 3, 4, 5, 7, 8, 9}
     seen = set()
     problems = []
@@ -638,6 +711,9 @@ def _entry_template_path(entry) -> str:
 
 
 def _entry_source_preview_path(entry) -> str:
+    for value in (entry.source_path, entry.path):
+        if value and Path(bpy.path.abspath(value)).expanduser().is_file():
+            return value
     return entry.source_path or entry.path
 
 
@@ -737,7 +813,7 @@ class GBFR_OT_AnimationImportAction(Operator):
             state.last_status = (
                 f"已导入并激活 {entry.display_name}：{entry.frame_count} 帧，"
                 f"Action 误差 {error:.2g}，源矩阵 TRS 投影 {projection_error:.2g}；"
-                "源 MOT 直接预览已禁用"
+                "MOT 直接预览已禁用"
             )
             if passthrough:
                 state.last_status += f"；原样保留 {len(passthrough)} 条不可编辑轨道"
@@ -906,6 +982,7 @@ class GBFR_OT_AnimationToggleExportPreview(Operator):
             clip = load_mot(destination)
             _start_runtime_preview(
                 armature, context.scene, clip, exported_entry_name=entry.name,
+                rest_area="unpack",
             )
             entry.export_exists = True
             state.last_status = (
@@ -958,7 +1035,9 @@ class GBFR_OT_AnimationReimportExported(Operator):
                 entry.export_exists = False
                 raise ValueError(f"尚未找到已导出的 MOT: {destination}")
             clip = load_mot(destination)
-            samples, passthrough = _clip_basis_samples(armature, clip)
+            samples, passthrough = _clip_basis_samples(
+                armature, clip, rest_area="unpack",
+            )
             if state.export_preview_active:
                 _stop_preview(armature)
             _detach_action_stack(armature)
@@ -1043,17 +1122,16 @@ class GBFR_OT_AnimationRemoveAction(Operator):
         entry.action_name = ""
         entry.edit_action_name = ""
         entry.template_path = ""
-        if entry.source_path:
-            entry.path = entry.source_path
+        entry.path = _entry_source_preview_path(entry)
         entry.passthrough_track_count = 0
         entry.validation_status = ""
         if edit is not None:
             bpy.data.actions.remove(edit)
         bpy.data.actions.remove(base)
         if _has_imported_actions(state):
-            state.last_status = f"已移除 {entry.display_name} Action；源 MOT 直接预览仍禁用"
+            state.last_status = f"已移除 {entry.display_name} Action；MOT 直接预览仍禁用"
         else:
-            state.last_status = f"已移除最后一个 Action；源 MOT 预览已重新启用"
+            state.last_status = f"已移除最后一个 Action；source MOT 预览已重新启用"
         return {"FINISHED"}
 
 
@@ -1362,6 +1440,9 @@ class GBFR_PT_AnimationPreview(Panel):
         armature = _armature(context)
         state = armature.gbfr_animation
         layout = self.layout
+        reminder = layout.box()
+        reminder.label(text="MOT 使用 unpack 骨架基准", icon="INFO")
+        reminder.label(text="修改骨架后，请先“导出到工作区”再编辑或导出动画")
         row = layout.row(align=True)
         row.prop(state, "search", text="", icon="VIEWZOOM")
         row.operator("gbfr.animation_refresh", text="", icon="FILE_REFRESH")
@@ -1376,7 +1457,7 @@ class GBFR_PT_AnimationPreview(Panel):
         elif imported:
             controls.label(text="Action/NLA", icon="NLA")
         else:
-            controls.label(text="源 MOT", icon="FILE_MOVIE")
+            controls.label(text="source MOT", icon="FILE_MOVIE")
         if state.animations:
             item = state.animations[state.active_animation_index]
             annotation = _entry_annotation(item)
@@ -1397,7 +1478,7 @@ class GBFR_PT_AnimationPreview(Panel):
                     icon="FILE_MOVIE",
                 )
             else:
-                info.label(text="已有可编辑 Action，源 MOT 直接预览已禁用", icon="LOCKED")
+                info.label(text="已有可编辑 Action，MOT 直接预览已禁用", icon="LOCKED")
             active_entry = _action_entry(state, state.active_action_name)
             if active_entry is not None and not state.export_preview_active:
                 info.label(text=f"当前编辑：{active_entry.display_name}", icon="ACTION")

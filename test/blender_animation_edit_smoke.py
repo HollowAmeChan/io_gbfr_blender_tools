@@ -55,9 +55,12 @@ indices = [
 
 state.active_animation_index = indices[0]
 assert state.preview_active
+assert _ACTIVE_CLIPS[state.cache_key]["rest_area"] == "source"
 assert bpy.ops.gbfr.animation_import_action(animation_index=indices[0]) == {"FINISHED"}
 first = state.animations[indices[0]]
-source_preview_path = Path(first.source_path or first.path).resolve()
+default_preview_path = Path(first.source_path or first.path).resolve()
+assert default_preview_path.is_file()
+assert Path(first.path).resolve() == default_preview_path
 first_base = _entry_action(first)
 assert first_base is not None and not state.preview_active
 assert _has_imported_actions(state)
@@ -81,6 +84,7 @@ with tempfile.TemporaryDirectory(prefix="gbfr_mot_roundtrip_") as temporary:
         animation_index=indices[0],
     ) == {"FINISHED"}
     assert state.preview_active and state.export_preview_active
+    assert _ACTIVE_CLIPS[state.cache_key]["rest_area"] == "unpack"
     assert state.export_preview_entry_name == first.name
     assert armature.animation_data.action is None
     assert _ACTIVE_CLIPS[state.cache_key]["clip"].path == output.resolve()
@@ -181,7 +185,7 @@ with tempfile.TemporaryDirectory(prefix="gbfr_mot_edit_") as temporary:
     assert bpy.data.actions.get(old_base_name) is None
     assert bpy.data.actions.get(old_edit_name) is None
     assert Path(first.template_path) == output.resolve()
-    assert Path(first.path).resolve() == source_preview_path
+    assert Path(first.path).resolve() == default_preview_path
     assert armature.animation_data.action == reimported
     assert bpy.ops.gbfr.animation_add_edit_layer() == {"FINISHED"}
     assert bpy.ops.gbfr.animation_merge_edit_layer() == {"FINISHED"}
@@ -197,10 +201,10 @@ assert _has_imported_actions(state)
 assert bpy.ops.gbfr.animation_remove_action(animation_index=indices[0]) == {"FINISHED"}
 assert not _has_imported_actions(state)
 assert not first.template_path
-assert Path(first.path).resolve() == source_preview_path
+assert Path(first.path).resolve() == default_preview_path
 state.active_animation_index = indices[0]
 load_selected_animation(armature, bpy.context.scene)
 assert state.preview_active
-assert _ACTIVE_CLIPS[state.cache_key]["clip"].path == source_preview_path
+assert _ACTIVE_CLIPS[state.cache_key]["clip"].path == default_preview_path
 
 print("GBFR MOT Action/edit/export smoke passed")

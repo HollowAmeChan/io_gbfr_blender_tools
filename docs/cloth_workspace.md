@@ -70,7 +70,7 @@ blender --background --python test/blender_clp_tools_smoke.py -- <工作区 sour
 
 ## MOT 动画预览
 
-身体和面部模型导入后，`GBFR > MOT 动画` 会索引工作区 `source` 与 `unpack` 中的同模型 MOT。列表按文件名排序；没有可编辑 Action 时，点击条目按需解析源剪辑。也可以逐行导入多个 Action、添加单层 NLA 编辑层，并把每条动画独立导出到 unpack。
+身体和面部模型导入后，`GBFR > MOT 动画` 会索引工作区 `source` 与 `unpack` 中的同模型 MOT。列表按文件名排序；普通播放使用 source MOT/source skeleton，“预览导出 MOT”使用 unpack MOT/unpack skeleton。面板会常驻提醒修改 rest 后先把模型导出到工作区，但不会锁定 Action 操作。之后可以逐行导入多个 Action、添加单层 NLA 编辑层，并把每条动画独立导出到 unpack。
 
 面部骨骼整理方法、Action 编辑、写回流程和当前限制见 [MOT 动画制作与编辑](mot_animation_editing.md)。
 
