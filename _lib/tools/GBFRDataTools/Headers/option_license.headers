@@ -1,0 +1,23 @@
+add_column|LogoId|raw_string|0x18
+add_column|Unk2|raw_string|0x18
+add_column|Unk3|raw_string|0x18
+add_column|Unk4|hash_string
+add_column|Unk5|hash_string
+add_column|Unk6|hash_string
+add_column|Unk7|hash_string
+add_column|Unk8|hash_string
+add_column|Unk9|hash_string
+add_column|Unk10|hash_string
+add_column|Unk11|hash_string
+add_column|Unk12|hash_string
+add_column|Unk13|hash_string
+add_column|bool14|byte
+
+// Checks are compile time.
+add_column|IsPS5|byte
+add_column|IsPS4|byte
+add_column|IsPC|byte
+
+add_column|Key|hash_string
+add_column|LiscenseTextId|hash_string
+

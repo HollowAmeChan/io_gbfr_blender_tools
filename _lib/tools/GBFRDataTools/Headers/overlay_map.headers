@@ -1,0 +1,17 @@
+add_column|Name|raw_string|0x10
+add_column|Key|hash_string
+add_column|HeaderTextId|hash_string
+add_column|Unk4|hash_string   // (is a text ID, but doesnt show anywhere on the screen)
+add_column|MapOpacity|float
+add_column|MapDetail|float    // ? (changing the number makes the map a... square?) (is this supposed to be a float?)
+add_column|MapCenterX|float
+add_column|MapCenterZ|float
+add_column|Unk9|float
+
+set_min_version|1.2.0
+add_column|MapRotation|float
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|FateQuestIdMaybe1|hex_uint
+add_column|FateQuestIdMaybe2|hex_uint
+reset_min_version|

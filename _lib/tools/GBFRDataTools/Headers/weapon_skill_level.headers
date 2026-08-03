@@ -1,0 +1,12 @@
+add_column|SkillLevelUncap0|int
+add_column|SkillLevelUncap1|int
+add_column|SkillLevelUncap2|int
+add_column|SkillLevelUncap3|int
+add_column|SkillLevelUncap4|int
+add_column|SkillLevelUncap5|int
+add_column|SkillLevelUncap6|int
+add_column|SkillLevelAwakening0|int
+add_column|SkillLevelAwakening1|int
+add_column|SkillLevelAwakening2|int
+add_column|SkillLevelAwakening3|int
+add_column|Key|hash_string

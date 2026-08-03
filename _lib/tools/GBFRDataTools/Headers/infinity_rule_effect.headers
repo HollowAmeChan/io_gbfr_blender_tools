@@ -1,0 +1,3 @@
+add_column|Key|hash_string
+add_column|Id|int
+add_column|Value|float

@@ -1,0 +1,43 @@
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|AmountGiven|int
+add_column|Unk2|int
+add_column|Key|hash_string
+add_column|ItemId|hash_string
+add_column|WeaponId|hash_string
+add_column|GemId|hash_string
+// Depends on quest baseinfo rewardRank? -1 is always included
+add_column|RewardRank|int
+add_column|PhaseItemIndex|int
+add_column|WeaponLevel|int
+add_column|WeaponUncap|int
+add_column|GemCount|int
+add_column|GemLevel|int
+add_column|Weight|uint
+add_column|NumExtraGemTraits|int
+add_column|StoryDifficulty|byte
+add_column|pad1|byte
+add_column|pad2|byte
+add_column|pad3|byte
+reset_min_version|
+
+set_max_version|1.3.2
+add_column|Key|hash_string
+add_column|ItemId|hash_string
+add_column|WeaponId|hash_string
+add_column|GemId|hash_string
+// Depends on quest baseinfo rewardRank? -1 is always included
+add_column|RewardRank|int
+add_column|PhaseItemIndex|int
+add_column|AmountGiven|int
+add_column|WeaponLevel|int
+add_column|WeaponUncap|int
+add_column|GemCount|int
+add_column|GemLevel|int
+add_column|Weight|uint
+add_column|NumExtraGemTraits|int
+// -1 = none, 0 = Story, 1 = Action, 2 = Hard, 3 = Ultimate
+add_column|StoryDifficulty|byte
+add_column|pad1|byte
+add_column|pad2|byte
+add_column|pad3|byte
+reset_max_version|

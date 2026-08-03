@@ -1,0 +1,53 @@
+add_column|IconId|raw_string|0x20
+add_column|ParamId1|hash_string
+add_column|ParamId2|hash_string
+add_column|ParamId3|hash_string
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+// texture: common_icon_lb
+// 0 = general stats - cmn_iclb_cmn_{0:03}_{1:02}
+// 1 = Unique Character upgrades - cmn_iclb_uni_pl{0}_{1:02}
+// 2 = ability upgrades - cmn_iclb_cmn_{0:03}_{1:02}
+// 3 = ability unlocks - cmn_iclb_99_01
+// 4 = unique character functionality unlocks (adrenaline rush for perci) - cmn_iclb_act_{0:03}_{1:02}
+// Also sorted.
+add_column|Texture_cmn_iclb_act_Id|int
+add_column|Unk1|int
+reset_min_version|
+
+add_column|Key|hash_string
+add_column|CharaId|hash_string
+add_column|AbilityId|hash_string
+add_column|FateEpisodeIdMaybe|hash_string   // ref: 8B 70 ? B8 ? ? ? ? 48 39 C6 75
+add_column|NodeTitle|hash_string
+add_column|NodeDescription|hash_string
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk2|hash_string
+reset_min_version|
+
+set_max_version|1.3.3      // 1.3.2 or earlier
+// texture: common_icon_lb
+// 0 = general stats - cmn_iclb_cmn_{0:03}_{1:02}
+// 1 = Unique Character upgrades - cmn_iclb_uni_pl{0}_{1:02}
+// 2 = ability upgrades - cmn_iclb_cmn_{0:03}_{1:02}
+// 3 = ability unlocks - cmn_iclb_99_01
+// 4 = unique character functionality unlocks (adrenaline rush for perci) - cmn_iclb_act_{0:03}_{1:02}
+// Also sorted.
+add_column|Texture_cmn_iclb_act_Id|hash_string
+reset_max_version|
+
+// used when Type = 4, ref: 0F B6 48 ? B8 ? ? ? ? D3 E0
+// ref 2: 8B 43 ? 8D 48 ? 83 F9 ? B9
+//   byte48 = 9;
+//   if ( (unsigned int)(LimitBonusData->byte48 - 11) >= 2 )
+//      byte48 = LimitBonusData->byte48;
+add_column|BonusType|int
+
+add_column|Unk12|int
+add_column|Unk13|int
+add_column|Unk14|int        // Largely hardcoded ids. LimitBonusManager_1->field_54 % 100 == a4 ref: 48 63 7F ? 48 69 DF
+add_column|UnkBool15|byte   // ref: 80 79 ? ? 0F 85 ? ? ? ? 8B 4C 24
+add_column|pad1|byte
+add_column|pad2|byte
+add_column|pad3|byte

@@ -1,0 +1,8 @@
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk1|hash_string
+add_column|Unk2|hash_string
+reset_min_version|
+
+add_column|Unk3|hash_string
+add_column|Unk4|hex_uint
+add_column|Unk5|int

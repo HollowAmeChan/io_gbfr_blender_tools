@@ -1,0 +1,42 @@
+add_column|Key|hash_string
+add_column|ViewActivated|hash_string
+add_column|InterfaceOpened|hash_string
+add_column|MultiPurposeId|hash_string
+add_column|ViewId2|hash_string
+add_column|ViewId3|hash_string
+add_column|ViewId4|hash_string
+
+set_min_version|2.0.0.2            // GBFR ER Closed Beta
+add_column|Unk16|int
+add_column|Unk18|int
+add_column|IconPixelCountFromCenterLeftRight|float
+add_column|IconPixelCountFromCenterUpDown|float
+add_column|IconRotation|float
+add_column|Unk19|float
+add_column|CommandValue|uint     // (CommandType 6 with a value here and an ItemId in MultiPurposeId will give the amount of the item specified)
+add_column|CommandType|uint
+add_column|QuestId|hex_uint
+add_column|Unk20|int
+add_column|Unk21|int
+add_column|Bool14|byte
+add_column|Bool15|byte           // (only active on the start of a tutorial, but not on all of them)
+add_column|pad1|byte
+add_column|pad2|byte
+reset_min_version|
+
+set_max_version|2.0.0.1           // GBFR ER Closed Beta
+add_column|QuestId|hex_uint
+add_column|CommandType|uint
+add_column|CommandValue|uint     // (CommandType 6 with a value here and an ItemId in MultiPurposeId will give the amount of the item specified)
+add_column|IconPixelCountFromCenterLeftRight|float
+add_column|IconPixelCountFromCenterUpDown|float
+add_column|IconRotation|float
+add_column|Bool14|byte
+add_column|Bool15|byte           // (only active on the start of a tutorial, but not on all of them)
+
+set_min_version|2.0.0.0            // GBFR ER Closed Beta
+add_column|Unk16|int
+reset_min_version|
+
+add_column|pad1|byte
+add_column|pad2|byte

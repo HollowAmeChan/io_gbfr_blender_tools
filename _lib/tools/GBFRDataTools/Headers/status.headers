@@ -1,0 +1,71 @@
+/////////////////////////////////////////////////////////////
+// >=2.0.0 (GBFR ER Closed Beta)
+/////////////////////////////////////////////////////////////
+set_min_version|2.0.0
+
+// These shifted a little in ER release
+set_min_version|2.0.2
+add_column|StatusCodeName|raw_string|0x18
+add_column|StatusCodeName2|raw_string|0x18
+add_column|IconFileNameId|raw_string|0x18
+set_min_version|2.0.0
+
+set_max_version|2.0.0.2
+add_column|StatusCodeName|raw_string|0x10
+add_column|IconFileNameId2|raw_string|0x10
+add_column|Unk1|raw_string|0x08
+add_column|IconFileNameId|raw_string|0x10
+add_column|Unk2|raw_string|0x08
+reset_max_version|
+
+// (translates Key, and provides the buffs listed)
+add_column|AccompanyingStatuses1|hash_string
+add_column|AccompanyingStatuses2|hash_string
+add_column|AccompanyingStatuses3|hash_string
+add_column|AccompanyingStatuses4|hash_string
+
+add_column|StatusHeader2|hash_string
+add_column|StatusHeader1|hash_string  // (Read by playerabilityuiparameter, "parameterType_":2)
+add_column|Key|hash_string            // (Read by playerabilityuiparameter, "parameterType_":1)
+add_column|StatusName|hash_string  // (Read by playerabilityuiparameter, "parameterType_":0)
+add_column|StatusHeader0|hash_string
+add_column|Unk3|int
+add_column|Unk4|uint
+add_column|Category|uint
+add_column|DisplayType|uint
+add_column|StatusId|uint // Note that the game will refer to this and it's vastly hardcoded
+add_column|Unk5|int
+add_column|IsAilment|byte
+add_column|IsBuff|byte
+add_column|HasLevels|byte
+add_column|DisplayStatusAboveCharacter|byte
+add_column|PositiveStatusOrNegativeStatus|byte
+add_column|Unk7|byte
+add_column|Unk8|byte
+add_column|Unk9|byte
+reset_min_version|
+reset_max_version|
+
+/////////////////////////////////////////////////////////////
+// <= 1.3.2
+/////////////////////////////////////////////////////////////
+set_max_version|1.3.2
+add_column|IconFileNameId|raw_string|0x10
+add_column|AccompanyingStatuses1|hash_string  // (translates Key, and provides the buffs listed)
+add_column|AccompanyingStatuses2|hash_string
+add_column|AccompanyingStatuses3|hash_string
+add_column|AccompanyingStatuses4|hash_string
+add_column|Key|hash_string
+add_column|StatusHeader0|hash_string          // (Read by playerabilityuiparameter, "parameterType_":0)
+add_column|Unk11|hash_string
+add_column|StatusHeader1|hash_string          // (Read by playerabilityuiparameter, "parameterType_":1)
+add_column|StatusHeader2|hash_string          // (Read by playerabilityuiparameter, "parameterType_":2)
+add_column|StatusId|uint                      // Note that the game will refer to this and it's vastly hardcoded
+add_column|PositiveStatusOrNegativeStatus|uint
+add_column|Category|int
+add_column|IsBuff|byte
+add_column|IsAilment|byte
+add_column|Unk19|byte
+add_column|Unk20|byte
+reset_max_version|
+

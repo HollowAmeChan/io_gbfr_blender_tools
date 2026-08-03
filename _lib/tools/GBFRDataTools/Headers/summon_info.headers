@@ -1,0 +1,23 @@
+add_column|IconIdMaybe|raw_string|0x10
+
+set_min_version|2.0.0.1        // GBFR ER Open Beta
+add_column|UnkName|raw_string|0x20
+reset_min_version|
+
+add_column|SummonName|hash_string
+add_column|SummonDescription|hash_string
+add_column|PrimalBurstName|hash_string
+add_column|MoveControlText|hash_string
+add_column|SquareControlText|hash_string
+add_column|TriangleControlText|hash_string
+add_column|Key|int
+add_column|Unk11|int
+add_column|Unk12|int
+add_column|Element|int
+add_column|SummonCost|int
+add_column|Unk15|int
+add_column|Unk16|byte
+add_column|Unk17|byte
+add_column|Unk18|byte
+add_column|Unk19|byte
+add_column|Unk20|int

@@ -1,0 +1,8 @@
+add_column|Key|hash_string
+add_column|ItemName1|hash_string
+add_column|Item2|hash_string
+add_column|ItemName2|hash_string
+add_column|Icon1|hash_string
+add_column|Icon2|hash_string
+add_column|SortOrder1|uint
+add_column|SortOrder2|uint

@@ -1,0 +1,13 @@
+add_column|ItemCategory1|int
+add_column|ItemCategory2|int
+add_column|ItemCategory3|int
+add_column|ItemCategory4|int
+add_column|ItemCategory5|int
+add_column|Key|int
+add_column|QuestMainType_Rank|int
+add_column|Rate|int
+// Alternatives to ids above
+add_column|ItemCategoryMin1|int
+add_column|ItemCategoryMax1|int
+add_column|ItemCategoryMin2|int
+add_column|ItemCategoryMax2|int

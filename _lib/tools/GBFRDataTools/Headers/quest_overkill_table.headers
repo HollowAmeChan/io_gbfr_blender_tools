@@ -1,0 +1,16 @@
+add_column|DmgPercent1|float
+add_column|DmgPercent2|float
+add_column|DmgPercent3|float
+add_column|DmgPercent4|float
+add_column|DmgPercent5|float
+add_column|MinEnemyKilled1|int
+add_column|MinEnemyKilled2|int
+add_column|MinEnemyKilled3|int
+add_column|MinEnemyKilled4|int
+add_column|MinEnemyKilled5|int
+add_column|MspMultiplier1|float
+add_column|MspMultiplier2|float
+add_column|MspMultiplier3|float
+add_column|MspMultiplier4|float
+add_column|MspMultiplier5|float
+add_column|Key|hex_uint

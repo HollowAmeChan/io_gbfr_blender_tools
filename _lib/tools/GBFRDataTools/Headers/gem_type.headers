@@ -1,0 +1,10 @@
+add_column|Unk1|int
+add_column|Unk2|hex_uint
+add_column|Unk3|hex_uint
+add_column|Unk4|hex_uint
+add_column|Unk5|hex_uint
+add_column|Unk6|hex_uint
+add_column|Unk7|hex_uint
+add_column|Unk8|hex_uint
+add_column|Unk9|hex_uint
+add_column|Unk10|hex_uint

@@ -1,0 +1,7 @@
+add_column|Hp|float
+add_column|Attack|float
+add_column|DefenseLikely|uint
+add_column|Stun|float
+add_column|CritRate|float
+add_column|Key|hash_string
+add_column|Level|uint

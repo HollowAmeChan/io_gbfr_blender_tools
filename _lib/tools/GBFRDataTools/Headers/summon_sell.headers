@@ -1,0 +1,4 @@
+add_column|RarityOneSellValueMaybe|int
+add_column|RarityTwoSellValueMaybe|int
+add_column|RarityThreeSellValueMaybe|int
+add_column|TotalSkillAndBaseParamLevelsMaybe|int

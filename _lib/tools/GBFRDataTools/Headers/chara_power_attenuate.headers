@@ -1,0 +1,4 @@
+add_column|Key|uint
+add_column|StatAmountForRange|float
+add_column|PowerPerStatInRange|float
+

@@ -1,0 +1,10 @@
+add_column|EnemyLevelDifferenceFromPlayer|int
+add_column|float2|float
+add_column|Unk3|int
+add_column|EnemyNameTagColor|hex_uint
+add_column|Unk5|int
+add_column|Unk6|int
+add_column|float7|float
+
+set_min_version|2.0.0
+add_column|Unk8|uint

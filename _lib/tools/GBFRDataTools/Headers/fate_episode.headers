@@ -1,0 +1,59 @@
+/////////////////////////////////////////////////////////////
+// 2.0.0
+/////////////////////////////////////////////////////////////
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|StoryNoteArchiveId1|hash_string
+add_column|StoryNoteArchiveId2|hash_string
+add_column|ReqCharaSlot2|hash_string
+add_column|ReqCharaSlot3|hash_string
+add_column|ReqCharaId|hash_string
+add_column|ReqCharaSlot4|hash_string
+add_column|Unk1|hash_string
+add_column|Unk2|hash_string
+add_column|Unk3|hash_string
+add_column|FormationSlotId|hash_string
+add_column|ItemReward|hash_string
+add_column|RequiredQuestName|hash_string
+add_column|Key|hash_string
+add_column|CharacterDescription|hash_string
+add_column|SummaryOfPreviousFate|hash_string
+add_column|FateMissionTitle|hash_string
+add_column|Unk11|hash_string
+add_column|CharaId|hash_string
+add_column|ReqQuestId|hex_uint
+add_column|MissionQuestId|hex_uint
+add_column|PartyUnlockStatus|int
+add_column|SortOrder|int
+add_column|ReqLevel|int
+add_column|Bool1|byte
+add_column|UnlockByDefaultMaybe|byte
+add_column|FinalFateMaybe|byte
+add_column|Bool4|byte
+reset_min_version|
+
+/////////////////////////////////////////////////////////////
+// <= 1.3.2
+/////////////////////////////////////////////////////////////
+set_max_version|1.3.2
+add_column|ReqCharaId|hash_string
+add_column|ReqCharaSlot2|hash_string
+add_column|ReqCharaSlot3|hash_string
+add_column|ReqCharaSlot4|hash_string
+add_column|StoryNoteArchiveId1|hash_string     // system/table/text/text_story
+add_column|StoryNoteArchiveId2|hash_string
+add_column|Key|hash_string
+add_column|CharaId|hash_string
+add_column|FormationSlotId|hash_string
+add_column|FateMissionTitle|hash_string        // system/table/text/text_fate_episode
+add_column|Unk11|hash_string                   // Changing it makes no noticable difference? - system/table/text/text_fate_episode
+add_column|SummaryOfPreviousFate|hash_string   // system/table/text/text_fate_episode
+add_column|CharacterDescription|hash_string    // block of text on character select menu in fate menu - system/table/text/text_fate_episode
+add_column|RequiredQuestName|hash_string       // system/table/text/text_ui
+add_column|ItemReward|hash_string
+add_column|PartyUnlockStatus|int               // 0 is solo, 1 is open, 2 is preset
+add_column|ReqQuestId|hex_uint
+add_column|ReqLevel|int
+add_column|SortOrder|int
+add_column|MissionQuestId|hex_uint
+add_column|UnlockByDefaultMaybe|int
+reset_max_version|

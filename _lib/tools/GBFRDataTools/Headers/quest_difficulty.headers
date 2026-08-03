@@ -1,0 +1,37 @@
+add_column|EnemyLevelStory|int
+add_column|EnemyLevelAction|int
+add_column|EnemyLevelHard|int
+add_column|EnemyLevelUltimate|int
+add_column|EnemyAiLevelStory|int
+add_column|EnemyAiLevelAction|int
+add_column|EnemyAiLevelHard|int
+add_column|EnemyAiLevelUltimate|int
+add_column|float9|float
+add_column|float10|float
+add_column|Unk11|int
+add_column|Unk12|int
+add_column|Unk13|int
+add_column|Unk14|int
+add_column|float15|float
+add_column|float16|float
+add_column|float17|float
+add_column|float18|float
+add_column|float19|float
+add_column|float20|float
+add_column|float21|float
+add_column|float22|float
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|float23|float
+add_column|float24|float
+reset_min_version|
+
+add_column|Key|hash_string
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|float25|float
+add_column|float26|float
+add_column|Unk27|int
+add_column|float28|float
+add_column|float29|float
+add_column|float30|float

@@ -1,0 +1,33 @@
+add_column|FormatText1|hash_string
+add_column|FormatText2|hash_string
+add_column|FormatText3|hash_string
+add_column|Lv1Value|float
+add_column|Lv2Value|float
+add_column|Lv3Value|float
+add_column|Lv4Value|float
+add_column|Lv5Value|float
+add_column|Lv6Value|float
+add_column|Lv7Value|float
+add_column|Lv8Value|float
+add_column|Lv9Value|float
+add_column|Lv10Value|float
+add_column|Key|hash_string
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk20|int
+reset_min_version|
+
+add_column|NameFormat|hash_string
+add_column|FullName|hash_string
+
+
+// (1 is flat Hp, 2 is flat critical%, etc.) (this doesnt map anywhere afaik, just internal things)
+// cmn_iclb_cmn_{0:03}_{1:02}
+//                 ^?
+add_column|LimitBonusParamTypeId|int
+
+add_column|DisplayNumberMultiplier|int
+add_column|Unk19|int
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk21|int

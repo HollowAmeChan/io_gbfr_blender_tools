@@ -1,0 +1,2 @@
+add_column|CriticalHitRate|int
+add_column|Unk2|float

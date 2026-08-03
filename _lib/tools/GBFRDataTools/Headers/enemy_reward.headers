@@ -1,0 +1,9 @@
+add_column|Key|hash_string
+add_column|QuestSubCategory_0_7_RewardId1|hash_string
+add_column|QuestSubCategory_2_RewardId|hash_string
+add_column|QuestSubCategory_1_RewardId3|hash_string
+add_column|QuestSubCategory_3_RewardId4|hash_string
+add_column|QuestSubCategory_4_RewardId5|hash_string
+add_column|QuestSubCategory_5_RewardId6|hash_string
+add_column|Unk8|hash_string
+add_column|Unk9|hash_string

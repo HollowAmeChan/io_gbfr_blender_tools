@@ -1,0 +1,8 @@
+add_column|Rank1NodeCountAdd|int
+add_column|Rank2NodeCountAdd|int
+add_column|Rank3NodeCountAdd|int
+add_column|RankEXNodeCountAdd|int
+add_column|MasterLevel|int
+add_column|HealthAdd|int
+add_column|AttackAdd|int
+add_column|DmgCapAdd|int

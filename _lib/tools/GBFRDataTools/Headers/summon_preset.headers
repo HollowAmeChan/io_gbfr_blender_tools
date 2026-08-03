@@ -1,0 +1,7 @@
+add_column|PresetId|raw_string|0x18
+add_column|SummonId|hash_string
+add_column|SkillId|hash_string
+add_column|BaseParamId|hash_string
+add_column|EquippedSlot|int
+add_column|SkillLevel|int
+add_column|BaseParamLevel|int

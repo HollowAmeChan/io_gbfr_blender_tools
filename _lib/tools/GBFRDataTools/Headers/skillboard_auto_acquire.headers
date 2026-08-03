@@ -1,0 +1,4 @@
+add_column|SkillboardLayoutId1|hash_string
+add_column|SkillboardLayoutId2|hash_string
+add_column|SkillboardLayoutId3|hash_string
+add_column|Unk4|hash_string

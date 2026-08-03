@@ -173,19 +173,14 @@ def _file_sha256(path: Path) -> str:
 
 
 def locate_gbfr_data_tools(workspace_root: str | Path) -> Path:
-    workspace_root = Path(workspace_root).expanduser().resolve()
     relative = Path("_lib/tools/GBFRDataTools/GBFRDataTools.exe")
-    candidates = []
-    for root in (workspace_root, *workspace_root.parents):
-        candidates.extend((root / relative, root / "GBFR_modtools" / relative))
-    executable = shutil.which("GBFRDataTools") or shutil.which("GBFRDataTools.exe")
-    if executable:
-        candidates.append(Path(executable))
+    addon_root = Path(__file__).resolve().parent
+    candidates = (addon_root / relative, addon_root / "GBFRDataTools/GBFRDataTools.exe")
     for candidate in candidates:
         if candidate.is_file():
             return candidate.resolve()
     raise FileNotFoundError(
-        "找不到 GBFRDataTools.exe；请保留 GBFR_modtools/_lib/tools/GBFRDataTools 工具目录"
+        "找不到插件自带的 GBFRDataTools.exe；请保留插件目录下的 _lib/tools/GBFRDataTools"
     )
 
 

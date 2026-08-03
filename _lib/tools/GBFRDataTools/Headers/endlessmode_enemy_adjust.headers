@@ -1,0 +1,8 @@
+add_column|Key|hash_string
+add_column|Unk2|float
+add_column|Unk3|float
+
+set_min_version|2.0.0.1        // GBFR ER Open Beta
+add_column|Unk4|float
+add_column|Unk5|float
+reset_min_version|

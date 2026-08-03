@@ -1,0 +1,8 @@
+add_column|DisplayNameForUnlockRequirement1|hash_string
+add_column|DisplayNameForUnlockRequirement2|hash_string
+add_column|Key|uint
+add_column|QuestId|hash_string
+
+// ER 2.0.0
+set_min_version|2.0.0
+add_column|MasterBreakLevelRequired|uint

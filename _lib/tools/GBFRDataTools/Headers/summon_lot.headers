@@ -1,0 +1,5 @@
+add_column|Key|hash_string
+add_column|SkillId|hash_string
+add_column|SummonCurveId|hash_string
+add_column|Weight|int
+add_column|Unk5|hex_uint

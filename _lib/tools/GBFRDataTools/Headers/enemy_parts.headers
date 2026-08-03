@@ -1,0 +1,11 @@
+add_column|BodyPartRewardId1|hash_string
+add_column|BodyPartRewardId2|hash_string
+add_column|BodyPartRewardId3|hash_string
+
+// Selection process:
+//   UnkFlag && (BodyPartIndex1 == targetIndex || BodyPartIndex2 == targetIndex || BodyPartIndex3 == targetIndex)
+add_column|BodyPartIndex1|int
+add_column|BodyPartIndex2|int
+add_column|BodyPartIndex3|int
+add_column|Key|hash_string
+add_column|UnkFlag|int

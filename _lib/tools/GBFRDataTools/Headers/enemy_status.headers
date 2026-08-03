@@ -1,0 +1,12 @@
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Hp|int64
+add_column|Attack|int64
+reset_min_version|
+
+set_max_version|1.3.2
+add_column|Hp|int
+add_column|Attack|int
+reset_max_version|
+
+add_column|Key|hash_string
+add_column|StartLevelRangeStatInterpolation|uint

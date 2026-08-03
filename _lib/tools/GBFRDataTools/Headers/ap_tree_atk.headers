@@ -1,0 +1,54 @@
+add_column|BranchId1|hash_string
+add_column|BranchId2|hash_string
+add_column|BranchId3|hash_string
+add_column|NodeIdRequired1|hash_string   // (ex. skill upgrades not being unlockable without the skill being unlocked)
+add_column|NodeIdRequired2|hash_string
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk1|int
+add_column|Unk2|int
+add_column|Unk3|int
+add_column|Unk4|int
+add_column|Unk5|int
+add_column|Unk6|int
+add_column|Unk7|int
+add_column|Unk8|int
+add_column|Unk9|int
+add_column|Unk10|int
+reset_min_version|
+
+add_column|WeaponId|hash_string  // Will not work for this table
+add_column|ReqFateEpisodeId|hash_string
+add_column|Unused8|hash_string
+
+set_max_version|1.3.2
+add_column|Key|hash_string
+add_column|CharaId|hash_string
+add_column|LimitBonusId|hash_string
+add_column|LimitBonusParamIndex|uint
+add_column|MspCost|uint
+add_column|DiffSeparatorMaybe|uint
+reset_max_version|
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|LimitBonusId|hash_string
+add_column|Key|hash_string
+add_column|Unk11|hash_string
+add_column|Unk12|hash_string
+add_column|CharaId|hash_string
+add_column|LimitBonusParamIndex|uint
+add_column|MspCost|uint
+add_column|ReqWepTranscensionLevel|uint
+reset_min_version|
+
+add_column|ReqCharLevel|uint
+add_column|ReqQuestId|hex_uint
+add_column|IsBigNode|uint
+add_column|NodeGridLocation|uint    // (correlates to a specific location, each row dividing into 5 possible locations, and each row being the next set of 5)
+add_column|ReqWepLevel|uint
+add_column|ReqWepUncapLevel|uint
+add_column|ReqWepAwakeLevel|uint
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk13|uint
+add_column|DiffSeparatorMaybe|uint

@@ -1,0 +1,65 @@
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|ApTreeWepRebuild1Limit|uint
+add_column|ApTreeWepRebuild2Limit|uint
+add_column|ApTreeWepRebuild3Limit|uint
+add_column|ApTreeWepRebuild4Limit|uint
+add_column|ApTreeWepRebuild5Limit|uint
+add_column|ApTreeWepRebuild6Limit|uint
+add_column|Wep1TranscendenceLimit|uint
+add_column|Wep2TranscendenceLimit|uint
+add_column|Wep3TranscendenceLimit|uint
+add_column|Wep4TranscendenceLimit|uint
+add_column|Wep5TranscendenceLimit|uint
+add_column|Wep6TranscendenceLimit|uint
+reset_min_version|
+
+add_column|ApTreeWep1Limit|uint
+add_column|ApTreeWep2Limit|uint
+add_column|ApTreeWep3Limit|uint
+add_column|ApTreeWep4Limit|uint
+add_column|ApTreeWep5Limit|uint
+add_column|ApTreeWep6Limit|uint
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk19|uint // Maybe damage cap limits???
+add_column|Unk20|uint
+add_column|Unk21|uint
+reset_min_version|
+
+add_column|PWRUpperboundLimitKey|uint
+
+// >= 2.0.0
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|MasterSyleLimit|uint
+add_column|MasterLevelLimit|uint
+add_column|PWRLimit|uint
+add_column|MediationOvermasteryLevelLimit|uint
+add_column|CharaStatusFateIdLimit|uint
+add_column|CombinedSkillTraitLevelLimit|uint    // Includes weapon's
+add_column|WeaponAwakeLevelLimit|uint
+add_column|ApTreeDefLimit|uint
+add_column|ApTreeAtkLimit|uint
+add_column|WeaponLevelLimit|uint
+add_column|CharaLevelLimit|uint
+add_column|AtkLimit|uint
+add_column|HpLimit|uint
+add_column|MirageMunitionLimit|uint
+add_column|Unk37|int
+reset_min_version|
+
+// <= 1.3.2
+set_max_version|1.3.2
+  set_min_version|1.1.0
+  add_column|HpLimit|uint
+  add_column|AtkLimit|uint
+  reset_min_version|
+add_column|CharaLevelLimit|uint
+add_column|WeaponLevelLimit|uint
+add_column|ApTreeAtkLimit|uint
+add_column|ApTreeDefLimit|uint
+add_column|WeaponAwakeLevelLimit|uint
+add_column|CombinedSkillTraitLevelLimit|uint     // Includes weapon's
+add_column|MirageMunitionLimit|uint
+add_column|CharaStatusFateIdLimit|uint
+add_column|MediationOvermasteryLevelLimit|uint
+add_column|PWRLimit|uint                         // This is set as temporary pwr if current pwr is above or equal cutoff

@@ -1,0 +1,8 @@
+add_column|DrainCapMultiplier1|float
+add_column|DrainCapMultiplier2|float
+add_column|DrainCapMultiplier3|float
+add_column|DrainCapMultiplier4|float
+add_column|DrainCapMultiplier5|float
+add_column|Unk6|float
+add_column|CharacterId|hash_string
+add_column|AttackRate|float

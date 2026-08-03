@@ -1,0 +1,18 @@
+// Depends on quest's reward rank.
+add_column|RewardIdRank1|hash_string
+add_column|RewardIdRank2|hash_string
+add_column|RewardIdRank3|hash_string
+add_column|RewardIdRank4|hash_string
+add_column|RewardIdRank5|hash_string
+add_column|RewardIdRank6|hash_string
+add_column|RewardIdRank7|hash_string
+add_column|RewardIdRank8|hash_string
+add_column|RewardIdRank9|hash_string
+add_column|RewardIdRank10|hash_string
+add_column|RewardIdRank11|hash_string
+add_column|RewardIdRank12|hash_string
+add_column|RewardIdRank13|hash_string
+add_column|RewardIdRank14|hash_string
+add_column|RewardIdRank15|hash_string
+add_column|RewardIdRank16|hash_string
+add_column|Key|hash_string

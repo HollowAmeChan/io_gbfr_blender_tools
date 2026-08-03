@@ -1,0 +1,17 @@
+// layouts/common/image_chapter/noatlastextures
+add_column|ImageFileName|raw_string|0x10
+
+// system/table/text/text_telop
+add_column|ChapterText|hash_string
+
+add_column|Title|hash_string
+add_column|Description|hash_string
+add_column|FormationSlotId|hash_string
+add_column|Key|int
+add_column|TownStageMaybe|hex_uint
+add_column|QuestId|hex_uint
+add_column|LoadingLotId|hash_string
+
+set_min_version|2.0.0
+add_column|UnkQuestId|hex_uint
+add_column|Unk2|uint

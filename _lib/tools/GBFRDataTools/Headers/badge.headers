@@ -1,0 +1,59 @@
+add_column|SortCharaId1|hash_string
+add_column|SortCharaId2|hash_string
+add_column|Name|hash_string
+add_column|Description|hash_string
+
+set_max_version|1.3.2
+add_column|RewardId|hash_string
+add_column|CharacterCondition|hash_string
+reset_max_version|
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|CharaId|hash_string
+add_column|CharacterCondition|hash_string
+add_column|RewardId|hash_string
+reset_min_version|
+
+add_column|Key|uint
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk2|int
+add_column|Unk3|uint
+add_column|Unk4|uint
+add_column|QuestId2|hex_uint
+reset_min_version|
+
+add_column|QuestId|hex_uint
+add_column|Unk6|hash_string
+add_column|OtherFilterId|uint   // (1=Progession(general)[OMs/Mastery nodes/crewmate unlocks/PWR level], 2=Wish list related, 3=OMs on specific crewmates, 4=trades/transmutes/shops, 5=Training/Sir Barrold, 6=anima/rupie earning?)
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk7|uint
+add_column|BattleFilterId|uint  // (3=related to ascension weapon awakenings, 2=related to boss kill amounts/specific boss kill challenges, 1=General Completable activity count [100 SBAs/100 Link Attacks/50 Revives])
+add_column|GearFilterId|uint    // (1=Weapons, 2= Sigils, 3= Special Upgrades, 4=Weapon Awakening)
+add_column|Unk8|uint
+add_column|NoteCategory|uint
+reset_min_version|
+
+set_max_version|1.3.2
+add_column|GearFilterId|uint    // (1=Weapons, 2= Sigils, 3= Special Upgrades, 4=Weapon Awakening)
+add_column|BattleFilterId|uint  // (3=related to ascension weapon awakenings, 2=related to boss kill amounts/specific boss kill challenges, 1=General Completable activity count [100 SBAs/100 Link Attacks/50 Revives])
+reset_max_version|
+
+add_column|SortOrder|uint
+add_column|BadgeTier|uint
+add_column|ReqQuantity|uint
+add_column|Value|uint
+add_column|BehaviorId|uint
+
+set_max_version|1.3.2
+add_column|NoteCategory|uint
+add_column|Unk19|uint
+reset_max_version|
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk9|uint
+add_column|Unk10|uint
+add_column|Unk11|uint
+add_column|IsEndlessRagnarok|uint
+reset_min_version|

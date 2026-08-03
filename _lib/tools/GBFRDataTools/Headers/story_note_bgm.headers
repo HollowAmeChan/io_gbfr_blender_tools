@@ -1,0 +1,33 @@
+add_column|BgmName|raw_string|0x20
+add_column|ImageType|raw_string|0x20
+
+/////////////////////////////////////////////////////////////
+// 2.0.0
+/////////////////////////////////////////////////////////////
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk1|byte
+add_column|Unk2|byte
+add_column|Unk3|byte
+add_column|Unk4|byte
+add_column|Unk5|hex_uint
+add_column|Unk6|hex_uint
+add_column|Unk7|hex_uint
+add_column|Unk8|hex_uint
+add_column|Key|hash_string
+add_column|MusicTitle|hash_string
+add_column|SortOrder|int
+add_column|Unk9|int
+add_column|Unk10|int
+add_column|QuestId|hex_uint
+reset_min_version|
+
+/////////////////////////////////////////////////////////////
+// <= 1.3.2
+/////////////////////////////////////////////////////////////
+set_max_version|1.3.2
+add_column|Key|hash_string
+add_column|MusicTitle|hash_string
+add_column|SortOrder|int
+add_column|QuestId|hex_uint
+add_column|Unk7|int
+reset_max_version|

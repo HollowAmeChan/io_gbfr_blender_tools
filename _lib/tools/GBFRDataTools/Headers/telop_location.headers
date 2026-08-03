@@ -1,0 +1,3 @@
+add_column|Key|hash_string
+add_column|LocationName|hash_string
+add_column|LocationNameEnglishNotUsed|hash_string

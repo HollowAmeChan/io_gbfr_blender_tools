@@ -1,0 +1,11 @@
+add_column|NumMasteries1|int
+add_column|NumMasteries2|int
+add_column|NumMasteries3|int
+add_column|NumMasteriesWeight1|int
+add_column|NumMasteriesWeight2|int
+add_column|NumMasteriesWeight3|int
+add_column|OvermasteryTypeTitle|hash_string
+add_column|OvermasteryTypeDescription|hash_string
+add_column|MeditationCategoryId|int
+add_column|MSPCost|int
+add_column|Unk11|int

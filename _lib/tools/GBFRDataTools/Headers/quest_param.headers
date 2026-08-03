@@ -1,0 +1,3 @@
+add_column|Enemy|hash_string
+add_column|ArenaDiameter|float
+add_column|ArenaHeight|float

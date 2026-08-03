@@ -1,0 +1,12 @@
+add_column|ItemId1|hash_string
+add_column|ItemId2|hash_string
+add_column|ItemId3|hash_string
+add_column|ItemId4|hash_string
+add_column|ItemId5|hash_string
+add_column|ItemId6|hash_string
+add_column|ItemId7|hash_string
+add_column|ItemId8|hash_string
+add_column|ItemId9|hash_string
+add_column|ItemId10|hash_string
+add_column|LocationTextId|hash_string
+add_column|KeyPhaseId|hash_string

@@ -1,0 +1,5 @@
+add_column|Hp|int64
+add_column|Attack|int64
+add_column|Key|hash_string
+add_column|StartLevelRangeStatInterpolation|uint
+

@@ -1,0 +1,15 @@
+add_column|MaterialId1|uint
+add_column|MaterialId2|uint
+add_column|MaterialId3|uint
+add_column|MaterialId4|uint
+add_column|MaterialId5|uint
+add_column|MaterialId6|uint
+add_column|MaterialId7|uint
+add_column|MaterialId8|uint
+add_column|MaterialId9|uint
+add_column|MaterialId10|uint
+add_column|MaterialId11|uint
+add_column|MaterialId12|uint
+add_column|MaterialId13|uint
+add_column|MaterialId14|uint
+add_column|Key|hash_string

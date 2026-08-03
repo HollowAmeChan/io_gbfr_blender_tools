@@ -1,0 +1,29 @@
+add_column|OptionText1|hash_string
+add_column|OptionText2|hash_string
+add_column|OptionText3|hash_string
+add_column|OptionText4|hash_string
+add_column|OptionText5|hash_string
+add_column|OptionText6|hash_string
+add_column|OptionText7|hash_string
+add_column|OptionText8|hash_string
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|OptionText9|hash_string
+add_column|OptionText10|hash_string
+add_column|OptionText11|hash_string
+reset_min_version|
+
+add_column|OptionUnk1|int
+add_column|OptionUnk2|int
+add_column|OptionUnk3|int
+add_column|OptionUnk4|int
+add_column|OptionUnk5|int
+add_column|OptionUnk6|int
+add_column|OptionUnk7|int
+add_column|OptionUnk8|int
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|OptionUnk9|int
+add_column|OptionUnk10|int
+add_column|OptionUnk11|int
+reset_min_version|
+
+add_column|Key|hash_string

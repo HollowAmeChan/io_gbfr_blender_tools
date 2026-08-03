@@ -1,0 +1,4 @@
+add_column|Key|hash_string
+add_column|AttackRate|float
+add_column|CascadePercent|float
+

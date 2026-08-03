@@ -1,0 +1,14 @@
+add_column|AbilityId1|hash_string
+add_column|AbilityId2|hash_string
+add_column|AbilityId3|hash_string
+add_column|AbilityId4|hash_string
+add_column|AbilityId5|hash_string
+add_column|AbilityId6|hash_string
+add_column|AbilityId7|hash_string
+add_column|AbilityId8|hash_string
+add_column|AbilityId9|hash_string
+add_column|AbilityId10|hash_string
+add_column|AbilityId11|hash_string
+add_column|AbilityId12|hash_string
+add_column|CharaId|hash_string
+add_column|Key|hash_string

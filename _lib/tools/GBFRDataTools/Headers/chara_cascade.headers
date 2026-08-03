@@ -1,0 +1,3 @@
+add_column|Character|hash_string
+add_column|AttackRate|float
+add_column|Percent|float

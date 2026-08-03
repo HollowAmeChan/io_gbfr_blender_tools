@@ -1,0 +1,4 @@
+add_column|Key|hash_string
+add_column|SummonId|hash_string
+add_column|Weight|int
+add_column|Unk4|int

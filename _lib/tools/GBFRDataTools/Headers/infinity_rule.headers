@@ -1,0 +1,13 @@
+add_column|InfinityRuleEffectId1|hash_string
+add_column|InfinityRuleEffectId2|hash_string
+add_column|InfinityRuleEffectId3|hash_string
+add_column|InfinityRuleEffectId4|hash_string
+add_column|InfinityRuleEffectId5|hash_string
+add_column|InfinityRuleEffectId6|hash_string
+add_column|InfinityRuleEffectId7|hash_string
+add_column|InfinityRuleEffectId8|hash_string
+add_column|InfinityRuleEffectId9|hash_string
+add_column|InfinityRuleEffectId10|hash_string
+add_column|EffectName|hash_string
+add_column|EffectDescription|hash_string
+add_column|QuestId|hex_uint

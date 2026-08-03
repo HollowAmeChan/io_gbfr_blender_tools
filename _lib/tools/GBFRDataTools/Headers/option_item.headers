@@ -1,0 +1,95 @@
+add_column|Key|hash_string
+add_column|Name|hash_string
+add_column|Description|hash_string
+add_column|ItemType|int
+add_column|Min|int
+add_column|Max|int
+add_column|DefaultValue|int
+add_column|Unk7|int
+
+/////////////////////////////////////////////////////////////
+// 2.0.0.2 (GBFR ER Demo)
+/////////////////////////////////////////////////////////////
+set_min_version|2.0.0.2
+add_column|Unk70|int
+add_column|Unk9|byte
+add_column|Unk10|byte
+add_column|Unk11|byte
+add_column|Unk12|byte
+add_column|OnlyChangeableOnMainMenu|byte
+add_column|Unk14|byte
+add_column|IsPCLikely|byte                 // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+add_column|IsPS4Likely|byte                // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+
+// Certain keys are hardcoded not to show up:
+// 0x61270D9A
+// 0xE784CAE1
+// 0x18F20186
+// 0xC8850D64
+// 0x21AE6843
+// 0x13272FF8
+// ref: 81 39 ? ? ? ? 74 ? 49 83 F8
+add_column|IsEnabled|byte
+add_column|IsPS5Likely|byte
+add_column|VisibleOnMainMenu|byte          // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+add_column|Unk19|byte
+add_column|IsSwitch2Likely|byte            // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+add_column|Unk21|byte
+add_column|Unk22|byte
+add_column|Unk23|byte
+reset_min_version|
+
+/////////////////////////////////////////////////////////////
+// 2.0.0 (GBFR ER Closed Beta)
+/////////////////////////////////////////////////////////////
+set_min_version|2.0.0
+set_max_version|2.0.0.1
+add_column|Unk9|byte
+add_column|Unk10|byte
+add_column|Unk11|byte
+add_column|Unk12|byte
+add_column|OnlyChangeableOnMainMenu|byte
+add_column|Unk14|byte
+add_column|IsPCLikely|byte                 // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+add_column|IsPS4Likely|byte                // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+
+// Certain keys are hardcoded not to show up:
+// 0x61270D9A
+// 0xE784CAE1
+// 0x18F20186
+// 0xC8850D64
+// 0x21AE6843
+// 0x13272FF8
+// ref: 81 39 ? ? ? ? 74 ? 49 83 F8
+add_column|IsEnabled|byte
+add_column|IsPS5Likely|byte
+add_column|VisibleOnMainMenu|byte          // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+add_column|Unk19|byte
+add_column|IsSwitch2Likely|byte            // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+add_column|Unk21|byte
+add_column|Unk22|byte
+add_column|Unk23|byte
+reset_min_version|
+reset_max_version|
+
+/////////////////////////////////////////////////////////////
+// <= 1.3.2
+/////////////////////////////////////////////////////////////
+set_max_version|1.3.2
+// Certain keys are hardcoded not to show up:
+// 0x61270D9A
+// 0xE784CAE1
+// 0x18F20186
+// 0xC8850D64
+// 0x21AE6843
+// 0x13272FF8
+// ref: 81 39 ? ? ? ? 74 ? 49 83 F8
+add_column|IsEnabled|byte
+
+add_column|VisibleOnMainMenu|byte
+add_column|IsPS5|byte                       // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+add_column|IsPS4|byte                       // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+add_column|IsPC|byte                        // Checks are compile time. PS4 will check 0x23, PC will check 0x24
+add_column|OnlyChangeableOnMainMenu|byte
+add_column|Unk14|byte
+add_column|Unk15|byte

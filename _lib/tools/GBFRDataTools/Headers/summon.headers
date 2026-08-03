@@ -1,0 +1,9 @@
+add_column|SummonLotId1|hash_string
+add_column|SummonLotId2|hash_string
+add_column|SummonLotId3|hash_string
+add_column|SummonLotId4|hash_string
+add_column|Key|hash_string
+add_column|SummonParamId|hash_string
+add_column|Rarity|int
+add_column|SortOrderMaybe|int
+add_column|Unk9|int

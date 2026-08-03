@@ -1,0 +1,30 @@
+add_column|PwrStoryDiff|uint
+add_column|PwrActionDiff|uint
+add_column|PwrHardDiff|uint
+add_column|PwrUltimateDiff|uint
+add_column|CompletionTimeTier1|uint
+add_column|CompletionTimeTier2|uint
+add_column|CompletionTimeTier3|uint
+add_column|CompletionTimeTier4|uint
+add_column|CompletionTimeTier5|uint
+add_column|EliminationsCountTier1|uint
+add_column|EliminationsCountTier2|uint
+add_column|EliminationsCountTier3|uint
+add_column|EliminationsCountTier4|uint
+add_column|EliminationsCountTier5|uint
+add_column|ObjectiveHpRemainingTier1|uint
+add_column|ObjectiveHpRemainingTier2|uint
+add_column|ObjectiveHpRemainingTier3|uint
+add_column|ObjectiveHpRemainingTier4|uint
+add_column|ObjectiveHpRemainingTier5|uint
+add_column|RewardID|hash_string
+add_column|RewardID2|hash_string
+add_column|Key|hex_uint
+add_column|AdvisedPWR|uint
+add_column|SpeedrunTimer|uint
+add_column|Unk25|uint                       // (assumed to be overkill% but made defunct)
+add_column|Unk26|uint                       // (Assumed to be overkill amount but made defunct)
+add_column|ScoreOnCompletion|uint
+
+set_min_version|2.0.0       // GBFR ER Closed Beta
+add_column|Unk28|int

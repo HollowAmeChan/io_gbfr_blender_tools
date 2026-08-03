@@ -1,0 +1,13 @@
+add_column|Transcension0SkillLevel|int
+add_column|Transcension1SkillLevel|int
+add_column|Transcension2SkillLevel|int
+add_column|Transcension3SkillLevel|int
+add_column|Transcension4SkillLevel|int
+add_column|Transcension5SkillLevel|int
+add_column|Unk7|int
+add_column|Transcension6SkillLevel|int
+add_column|Unk9|int
+add_column|Unk10|int
+add_column|Transcension7SkillLevel|int
+add_column|Unk12|hash_string
+add_column|Unk13|hash_string

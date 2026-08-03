@@ -1,0 +1,4 @@
+add_column|Key|hash_string
+add_column|ChapterGroup|hash_string
+add_column|ChapterTitle|hash_string
+add_column|ChapterTitleEnglishNotUsed|hash_string

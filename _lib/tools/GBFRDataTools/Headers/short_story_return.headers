@@ -1,0 +1,11 @@
+add_column|QuestId1|hex_uint
+add_column|QuestId2|hex_uint
+add_column|QuestId3|hex_uint
+add_column|QuestId4|hash_string
+
+set_min_version|2.0.0.1        // GBFR ER Open Beta
+add_column|QuestId5|hash_string
+reset_min_version|
+
+add_column|Unk6|int
+add_column|PhaseId|hex_uint

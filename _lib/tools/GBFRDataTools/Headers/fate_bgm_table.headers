@@ -1,0 +1,16 @@
+// Type will depend on FSM CallBgm - bgmSetType
+// This table is only fetched if the quest category is 3
+
+add_column|BgmSetType2_EventListId|int
+add_column|BgmSetType3_EventListId|int
+add_column|Key|hash_string
+add_column|BgmSetType0_EventListId|int
+add_column|BgmSetType1_EventListId|int
+add_column|BgmSetType11_EventListId|int
+add_column|BgmSetType4_EventListId|int
+add_column|BgmSetType12_EventListId|int
+add_column|BgmSetType5_EventListId|int
+add_column|Unk10|int
+add_column|Unk11|int
+add_column|BgmSetType6_EventListId|int
+add_column|BgmSetType9_EventListId|int
