@@ -79,6 +79,11 @@ def encode_bone_group_name(group_name): # Encode bone group name to 4-byte littl
 	encoded_group_name = str(int.from_bytes(encoded_group_name.encode('ASCII'), 'little'))
 	return encoded_group_name
 
+
+def bone_group_export_name(bone_group):
+	"""Return the ASCII alias used for export while keeping the display name."""
+	return str(bone_group.get("gbfr_export_group_name") or bone_group.name)
+
 def lod_object_sort_key(lod_object):
 	name = lod_object.name.lower()
 	shadow_lod = next((index for index in range(3) if f"shadowlod{index}" in name), None)
@@ -358,7 +363,7 @@ def build_skeleton(
 						if bone.name in bone_collection.bones:
 							a1 = CreateBoneInfo(
 								skeleton_builder, n,
-								int(encode_bone_group_name(bone_collection.name)),
+								int(encode_bone_group_name(bone_group_export_name(bone_collection))),
 							)
 							break
 				else: # Blender 3
@@ -367,7 +372,7 @@ def build_skeleton(
 						bone_group = pbone.bone_group
 						a1 = CreateBoneInfo(
 							skeleton_builder, n,
-							int(encode_bone_group_name(bone_group.name)),
+							int(encode_bone_group_name(bone_group_export_name(bone_group))),
 						)
 			except:
 				a1 = CreateBoneInfo(skeleton_builder, n, int(encode_bone_group_name("_UNK")))
@@ -641,7 +646,7 @@ def write_some_data(
 		bone_groups = armature_obj.data.collections if bpy.app.version >= (4, 0, 0) else armature_obj.pose.bone_groups
 		for bone_group in bone_groups:
 			try:
-				encode_bone_group_name(bone_group.name)
+				encode_bone_group_name(bone_group_export_name(bone_group))
 			except:
 				raise ValueError(
 					format_exception(f"Bone group name '{bone_group.name}' is invalid.\n"
