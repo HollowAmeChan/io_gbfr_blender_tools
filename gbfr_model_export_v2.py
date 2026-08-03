@@ -356,12 +356,19 @@ def build_skeleton(
 				if bpy.app.version >= (4, 0, 0): # Blender 4
 					for bone_collection in armature_obj.data.collections:
 						if bone.name in bone_collection.bones:
-							a1  = CreateBoneInfo(skeleton_builder, n, int(bone_collection.name))
+							a1 = CreateBoneInfo(
+								skeleton_builder, n,
+								int(encode_bone_group_name(bone_collection.name)),
+							)
+							break
 				else: # Blender 3
 					pbone = armature_obj.pose.bones.get(bone.name)
 					if pbone.bone_group:
 						bone_group = pbone.bone_group
-						a1  = CreateBoneInfo(skeleton_builder, n, int(bone_group.name))
+						a1 = CreateBoneInfo(
+							skeleton_builder, n,
+							int(encode_bone_group_name(bone_group.name)),
+						)
 			except:
 				a1 = CreateBoneInfo(skeleton_builder, n, int(encode_bone_group_name("_UNK")))
 		
@@ -630,12 +637,11 @@ def write_some_data(
 			bone_index: deform_index
 			for deform_index, bone_index in enumerate(deform_bones_table)
 		}
-		# Re-encode and rename all the bone groups back to 4-byte little-endian ASCII uints
+		# Validate bone group names without changing the Blender scene.
 		bone_groups = armature_obj.data.collections if bpy.app.version >= (4, 0, 0) else armature_obj.pose.bone_groups
 		for bone_group in bone_groups:
 			try:
-				bone_group.name = encode_bone_group_name(bone_group.name)
-				print("Renamed bone group to:", bone_group.name)
+				encode_bone_group_name(bone_group.name)
 			except:
 				raise ValueError(
 					format_exception(f"Bone group name '{bone_group.name}' is invalid.\n"
