@@ -204,11 +204,11 @@ def _allocate_appended_bone_names(reference_names, occupied_names, count):
 	)
 
 
-def appended_bone_export_name_map(
+def _legacy_appended_bone_export_name_map(
 	armature_obj, mesh_objects, reference_skeleton, reserved_names=(),
 	reallocate_legacy_ids=False,
 ):
-	"""Return the exact temporary export names assigned to appended bones."""
+	"""Legacy implementation retained for reference."""
 	if reference_skeleton is None:
 		raise RuntimeError("实验性新增骨骼改名需要 reference skeleton。")
 	reference_names = _skeleton_bone_names(reference_skeleton)
@@ -267,6 +267,107 @@ def appended_bone_export_name_map(
 		occupied_names.add(export_name)
 	new_names = _allocate_appended_bone_names(reference_names, occupied_names, len(unassigned))
 	return fixed | {bone.name: new_name for bone, new_name in zip(unassigned, new_names)}
+
+
+def appended_bone_export_name_map(
+	armature_obj, mesh_objects, reference_skeleton, reserved_names=(),
+	reallocate_legacy_ids=False,
+):
+	"""Return export aliases while allocating IDs for copied duplicate bones."""
+	if reference_skeleton is None:
+		raise RuntimeError("Appended bones require a reference skeleton")
+	reference_names = _skeleton_bone_names(reference_skeleton)
+	native_bones = list(armature_obj.data.bones)
+	export_owners = {}
+	duplicate_bones = set()
+	for bone in native_bones:
+		export_name = export_bone_name(bone)
+		if _encoded_bone_id(export_name) is None:
+			continue
+		previous = export_owners.get(export_name)
+		if previous is not None and previous != bone.name:
+			duplicate_bones.add(bone.name)
+			continue
+		export_owners[export_name] = bone.name
+	extra_bones = [
+		bone for bone in native_bones
+		if export_bone_name(bone) not in reference_names
+		or bone.name in duplicate_bones
+	]
+	if not extra_bones:
+		return {}
+	occupied_names = set(reserved_names)
+	occupied_names.update(export_owners)
+	occupied_names.update(bone.name for bone in native_bones)
+	occupied_names.update(export_bone_name(bone) for bone in native_bones)
+	occupied_names.update(
+		group.name
+		for mesh_obj in mesh_objects
+		for group in mesh_obj.vertex_groups
+	)
+	fixed = {}
+	fixed_owners = {}
+	unassigned = []
+	for bone in extra_bones:
+		export_name = export_bone_name(bone)
+		if bone.name in duplicate_bones:
+			unassigned.append(bone)
+			continue
+		bone_id = _encoded_bone_id(export_name)
+		policy_version = int(bone.get("gbfr_auto_bone_policy", 0))
+		legacy_automatic_id = (
+			reallocate_legacy_ids
+			and _encoded_bone_id(bone.name) is None
+			and policy_version < APPENDED_BONE_POLICY_VERSION
+		)
+		if (
+			bone_id is None
+			or export_name in KNOWN_FP_FACE_BONE_NAMES
+			or legacy_automatic_id
+		):
+			unassigned.append(bone)
+			continue
+		if export_name in reference_names:
+			raise RuntimeError(
+				f"New bone {bone.name} has a fixed ID colliding with source skeleton: {export_name}"
+			)
+		previous = fixed_owners.get(export_name)
+		if previous is not None and previous != bone.name:
+			raise RuntimeError(f"New bone fixed ID collision: {previous} / {bone.name} -> {export_name}")
+		fixed_owners[export_name] = bone.name
+		fixed[bone.name] = export_name
+	new_names = _allocate_appended_bone_names(reference_names, occupied_names, len(unassigned))
+	return fixed | {bone.name: new_name for bone, new_name in zip(unassigned, new_names)}
+
+
+def repair_duplicate_bone_export_ids(armature_obj, mesh_objects, reference_skeleton):
+	"""Persist unique export IDs for bones that inherited a copied ID."""
+	owners = {}
+	duplicates = []
+	for bone in armature_obj.data.bones:
+		export_name = export_bone_name(bone)
+		previous = owners.get(export_name)
+		if previous is None:
+			owners[export_name] = bone.name
+		else:
+			duplicates.append(bone)
+	if not duplicates:
+		return ()
+	aliases = appended_bone_export_name_map(
+		armature_obj, mesh_objects, reference_skeleton,
+	)
+	repaired = []
+	for bone in duplicates:
+		alias = aliases.get(bone.name)
+		if alias is None:
+			continue
+		bone_id = int(alias[1:], 16)
+		bone["gbfr_bone_id"] = bone_id
+		bone["gbfr_original_name"] = alias
+		bone["original_name"] = alias
+		bone["gbfr_auto_bone_policy"] = APPENDED_BONE_POLICY_VERSION
+		repaired.append((bone.name, alias))
+	return tuple(repaired)
 
 
 def rename_new_bones_for_experimental_export(armature_obj, mesh_objects, reference_skeleton):

@@ -1066,6 +1066,39 @@ class GBFR_OT_ClothReload(Operator):
         return {"FINISHED"}
 
 
+class GBFR_OT_RepairDuplicateBoneIds(Operator):
+    bl_idname = "gbfr.repair_duplicate_bone_ids"
+    bl_label = "修复重复骨号"
+    bl_description = "为复制骨骼分配不冲突的导出 ID，并保留源骨骼的固定 ID"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        armature = _armature(context)
+        state = getattr(armature, "gbfr_cloth", None) if armature else None
+        if armature is None or state is None or not state.workspace_path:
+            self.report({"ERROR"}, "当前骨架没有可用的 GBFR 工作区 source skeleton")
+            return {"CANCELLED"}
+        before = {
+            bone.name: _bone_id(bone)
+            for bone in armature.data.bones
+        }
+        try:
+            _export_bone_mapping(armature, state, persist_appended=True)
+        except Exception as error:
+            state.last_status = str(error)
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        after = {
+            bone.name: _bone_id(bone)
+            for bone in armature.data.bones
+        }
+        changed = sum(before.get(name) != value for name, value in after.items())
+        state.last_status = f"已修复 {changed} 个骨骼的导出骨号"
+        self.report({"INFO"}, state.last_status)
+        _tag_redraw()
+        return {"FINISHED"}
+
+
 class GBFR_OT_ClpCreateFromSelection(Operator):
     bl_idname = "gbfr.clp_create_from_selection"
     bl_label = "从所选骨链创建 CLP"
@@ -1600,6 +1633,7 @@ class GBFR_PT_ClothEditor(Panel):
         summary.label(text=f"{len(state.clp_groups)} CLP", icon="CONSTRAINT_BONE")
         summary.label(text=f"{len(state.clh_layers)} CLH", icon="MESH_UVSPHERE")
         actions = layout.row(align=True)
+        actions.operator("gbfr.repair_duplicate_bone_ids", text="修复重复骨骼 ID", icon="BONE_DATA")
         actions.operator("gbfr.cloth_reload", text="重载 unpack", icon="FILE_REFRESH")
         actions.operator("gbfr.cloth_restore_source", text="恢复 source", icon="LOOP_BACK")
         layout.label(text="视口显示")
@@ -1974,6 +2008,7 @@ def _draw_overlay():
 classes = (
     GBFRClpNodeProperties, GBFRClpGroupProperties, GBFRClhCollisionProperties,
     GBFRClhLayerProperties, GBFRClothStateProperties, GBFR_OT_ClothReload,
+    GBFR_OT_RepairDuplicateBoneIds,
     GBFR_OT_ClothRestoreSource,
     GBFR_OT_ClpCreateFromSelection,
     GBFR_OT_ClpDeleteSelection, GBFR_OT_ClpRemoveActiveNode,
