@@ -420,7 +420,21 @@ def orthonormalize_tangent(normal, tangent):
 	return Vector((1.0, 0.0, 0.0))
 
 
+def _is_exportable_mesh(obj):
+	"""Only meshes with polygon faces can contribute an mmesh buffer."""
+	return (
+		obj is not None
+		and obj.type == 'MESH'
+		and len(obj.data.vertices) > 0
+		and len(obj.data.polygons) > 0
+	)
+
+
 def build_mesh_vert_dictionary(mesh_data):
+	if not mesh_data.uv_layers:
+		raise UserWarning(format_exception(
+			f'Mesh {mesh_data.name} has no UV maps; a UV0 map is required.'
+		))
 	uv_data = mesh_data.uv_layers.active.data
 	mesh_vert_table = {}
 	
@@ -480,7 +494,7 @@ def write_some_data(
 	lod_objects = sorted(root_obj.children, key=lod_object_sort_key)
 	mesh_objects = []
 	for lod in lod_objects:
-		mesh_objects.extend(list(lod.children))
+		mesh_objects.extend(child for child in lod.children if _is_exportable_mesh(child))
 	# print(mesh_objects)
 	
 	print(f"Exporting Model: {root_obj.name}")
@@ -490,7 +504,7 @@ def write_some_data(
 	#================================
 
 	for mesh_obj in mesh_objects:
-		if len(mesh_obj.data.vertices) == 0: continue # Empty mesh
+		if not _is_exportable_mesh(mesh_obj): continue # Empty mesh
 		mesh_obj.select_set(True) # Select mesh object
 		utils_select_active(mesh_obj)
 		if mesh_obj.vertex_groups:
@@ -521,7 +535,7 @@ def write_some_data(
 	export_section_timer_start = time.perf_counter() # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 	for mesh_obj in mesh_objects:
-		if len(mesh_obj.data.vertices) == 0: continue # Empty mesh
+		if not _is_exportable_mesh(mesh_obj): continue # Empty mesh
 		mesh_obj.select_set(True)
 		utils_select_active(mesh_obj) # Set mesh as active object
 		mesh_data = mesh_obj.data
@@ -705,7 +719,7 @@ def write_some_data(
 			face_table_offset = 0 # Updates after each mesh
 			chunks_face_offset = 0 # Updates after each mesh
 
-			mesh_objects = tuple(lod_obj.children)
+			mesh_objects = tuple(child for child in lod_obj.children if _is_exportable_mesh(child))
 			lod_has_color = any(mesh.data.color_attributes.get("COLOR") is not None for mesh in mesh_objects)
 			lod_has_uv1 = any(len(mesh.data.uv_layers) > 1 for mesh in mesh_objects)
 			# Weight buffers are shared by the whole LOD.  They cannot switch

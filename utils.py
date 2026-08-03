@@ -1,6 +1,7 @@
 import bpy
 import urllib
 import difflib # For bone tranlations
+from collections import defaultdict
 from .bone_name_mappings import BONE_NAME_MAPPINGS
 
 
@@ -50,25 +51,52 @@ def fix_normals(obj):
 	bpy.ops.mesh.flip_normals()
 	utils_set_mode('OBJECT')
 
+def _mark_uv_seams_from_islands(obj):
+	"""Mark UV discontinuities without requiring an IMAGE_EDITOR context."""
+	mesh = obj.data
+	uv_layer = mesh.uv_layers.active
+	if uv_layer is None:
+		return
+
+	uv_by_edge_vertex = defaultdict(list)
+	for polygon in mesh.polygons:
+		loop_indices = tuple(polygon.loop_indices)
+		for offset, loop_index in enumerate(loop_indices):
+			next_index = loop_indices[(offset + 1) % len(loop_indices)]
+			loop = mesh.loops[loop_index]
+			next_loop = mesh.loops[next_index]
+			uv_by_edge_vertex[(loop.edge_index, loop.vertex_index)].append(
+				tuple(uv_layer.data[loop_index].uv)
+			)
+			uv_by_edge_vertex[(loop.edge_index, next_loop.vertex_index)].append(
+				tuple(uv_layer.data[next_index].uv)
+			)
+
+		tolerance = 1e-6
+	for edge in mesh.edges:
+		for vertex_index in edge.vertices:
+			values = uv_by_edge_vertex.get((edge.index, vertex_index), ())
+			if len(values) < 2:
+				continue
+			first = values[0]
+			if any(
+				abs(value[0] - first[0]) > tolerance
+				or abs(value[1] - first[1]) > tolerance
+				for value in values[1:]
+			):
+				edge.use_seam = True
+				break
+
 def split_faces_by_edge_seams(obj): # Split mesh faces by seams
-	utils_set_mode('EDIT')
-	bpy.ops.mesh.select_all(action='SELECT')
-
-	bpy.ops.uv.select_all(action='SELECT') # Select all UVs
-	bpy.ops.uv.seams_from_islands(mark_seams=True) # Mark boundary edges of UV islands as seams
-
-	bpy.context.tool_settings.mesh_select_mode = (False, True, False) # Set Edge Select
-	bpy.ops.mesh.select_all(action = 'DESELECT')
-	
-	utils_set_mode('OBJECT') # For some reason we can only select edges in object mode ???????? :) Funny Blender
-	for edge in obj.data.edges: # Select all edge seams
-		if edge.use_seam:
-			edge.select = True
+	utils_set_mode('OBJECT')
+	_mark_uv_seams_from_islands(obj)
+	for edge in obj.data.edges:
+		edge.select = edge.use_seam
 
 	utils_set_mode('EDIT')
-	
+	bpy.context.tool_settings.mesh_select_mode = (False, True, False)
 	bpy.ops.mesh.edge_split(type='EDGE') # Split faces by selected edge seams
-	# utils_set_mode('OBJECT')
+	utils_set_mode('OBJECT')
 
 	# Just split all faces by all edges (like how imported, avoids UV stitching and Normals issues)
 	# bpy.ops.mesh.select_all(action = 'SELECT')

@@ -373,6 +373,46 @@ def _make_runtime(armature, clip: AnimationClip, rest_area=None):
     }
 
 
+def _track_binding_layout(runtime):
+    """Resolve editable tracks while preserving MOT's ordered root aliases."""
+    clip = runtime["clip"]
+    supported = {0, 1, 2, 3, 4, 5, 7, 8, 9}
+    bindings = []
+    candidates = defaultdict(list)
+    for index, track in enumerate(clip.tracks):
+        bone_id = 0x900 if track.bone_id == -1 else int(track.bone_id)
+        prop = int(track.property)
+        reason = None
+        if prop not in supported:
+            reason = "不支持的属性"
+        elif bone_id not in runtime["mapping"] or bone_id not in runtime["rest"]:
+            reason = "当前骨架没有此骨"
+        else:
+            candidates[(bone_id, prop)].append(index)
+        bindings.append([bone_id, prop, reason])
+
+    problems = []
+    for (bone_id, prop), indices in candidates.items():
+        if len(indices) == 1:
+            continue
+        raw_ids = {int(clip.tracks[index].bone_id) for index in indices}
+        if len(indices) == 2 and bone_id == 0x900 and raw_ids == {-1, 0x900}:
+            # The renderer applies MOT tracks in order. Both root identifiers target
+            # _900, so only the later track is visible and therefore editable.
+            bindings[indices[0]][2] = "被后续根轨道覆盖"
+            continue
+        for index in indices[1:]:
+            track = clip.tracks[index]
+            problems.append(f"重复骨 {track.bone_id} 属性 {track.property}")
+    if problems:
+        raise ValueError("MOT 无法转为 Action: " + "；".join(problems[:8]))
+
+    return tuple(
+        (bone_id, prop, reason is None, reason)
+        for bone_id, prop, reason in bindings
+    )
+
+
 def _reset_pose(armature):
     identity = Matrix.Identity(4)
     for pose_bone in armature.pose.bones:
@@ -843,24 +883,11 @@ def _create_action_from_basis_samples(
 
 def _clip_basis_samples(armature, clip: AnimationClip, rest_area=None):
     runtime = _make_runtime(armature, clip, rest_area)
-    supported = {0, 1, 2, 3, 4, 5, 7, 8, 9}
-    seen = set()
-    problems = []
     passthrough = []
-    for track in clip.tracks:
-        bone_id = 0x900 if track.bone_id == -1 else int(track.bone_id)
-        identity = (bone_id, int(track.property))
-        if track.property not in supported:
-            passthrough.append((track.bone_id, track.property, "不支持的属性"))
-            continue
-        if bone_id not in runtime["mapping"] or bone_id not in runtime["rest"]:
-            passthrough.append((track.bone_id, track.property, "当前骨架没有此骨"))
-            continue
-        if identity in seen:
-            problems.append(f"重复骨 {track.bone_id} 属性 {track.property}")
-        seen.add(identity)
-    if problems:
-        raise ValueError("MOT 无法转为 Action: " + "；".join(problems[:8]))
+    bindings = _track_binding_layout(runtime)
+    for track, (_bone_id, _prop, editable, reason) in zip(clip.tracks, bindings):
+        if not editable:
+            passthrough.append((track.bone_id, track.property, reason))
 
     result = {}
     for bone_id, tracks in runtime["tracks"].items():
@@ -937,22 +964,10 @@ def _sample_bound_action_for_template(armature, clip: AnimationClip, scene):
     runtime = _make_runtime(armature, clip)
     mapping = runtime["mapping"]
     rest = runtime["rest"]
-    supported = {0, 1, 2, 3, 4, 5, 7, 8, 9}
-    normalized_tracks = []
-    seen = set()
-    for track in clip.tracks:
-        bone_id = 0x900 if track.bone_id == -1 else int(track.bone_id)
-        identity = (bone_id, int(track.property))
-        editable = (
-            track.property in supported
-            and bone_id in mapping
-            and bone_id in rest
-        )
-        if editable and identity in seen:
-            raise ValueError(f"MOT 存在重复轨道 _{bone_id:03x}.{track.property}")
-        if editable:
-            seen.add(identity)
-        normalized_tracks.append((bone_id, int(track.property), editable))
+    normalized_tracks = tuple(
+        (bone_id, prop, editable)
+        for bone_id, prop, editable, _reason in _track_binding_layout(runtime)
+    )
 
     sampled = [
         [] if editable else [track.sample(frame) for frame in range(clip.frame_count)]
