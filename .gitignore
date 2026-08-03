@@ -6,3 +6,5 @@ __pycache__/
 htmlcov/
 test/output/
 *.blend1
+# Third-party runtime tools kept with the local addon installation.
+_lib/
