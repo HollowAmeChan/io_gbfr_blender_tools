@@ -1,10 +1,12 @@
 """Run with: blender --background --factory-startup --python this_file.py"""
 
 import json
+from math import radians
 from pathlib import Path
 import tempfile
 
 import bpy
+from mathutils import Quaternion, Vector
 
 
 bpy.ops.preferences.addon_enable(module="io_gbfr_blender_tools")
@@ -16,7 +18,7 @@ from io_gbfr_blender_tools.gbfr_sop import (
     make_swing_twist_operation, quaternion_error, save_sop,
 )
 from io_gbfr_blender_tools.gbfr_sop_blender import (
-    CONSTRAINT_PREFIX, GBFR_UL_SopOperations, _asset_from_state,
+    CONSTRAINT_PREFIX, DRIVER_EXPRESSION_PREFIX, GBFR_UL_SopOperations, _asset_from_state,
     _export_rest_quaternion, _model_export_ready, populate_sop_state,
     stage_sop_for_workspace,
 )
@@ -112,6 +114,32 @@ with tempfile.TemporaryDirectory() as temporary:
     )[0] == [0]
     state.operation_filter = "ALL"
 
+    def sop_drivers(bone_name):
+        data_path = armature.pose.bones[bone_name].path_from_id("rotation_quaternion")
+        animation_data = armature.animation_data
+        return [
+            curve for curve in animation_data.drivers
+            if curve.data_path == data_path
+            and curve.driver.expression.startswith(DRIVER_EXPRESSION_PREFIX)
+        ] if animation_data is not None else []
+
+    def assert_exact_pose(operation, target_name, source_name):
+        source_pose = armature.pose.bones[source_name]
+        source_pose.rotation_quaternion = Quaternion(
+            Vector((0.35, -0.2, 0.6)).normalized(), radians(23.0),
+        )
+        bpy.context.view_layer.update()
+        evaluated = armature.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        actual_basis = tuple(evaluated.pose.bones[target_name].rotation_quaternion)
+        source_rest = _export_rest_quaternion(armature, source_name)
+        target_rest = _export_rest_quaternion(armature, target_name)
+        source_local = source_rest @ source_pose.rotation_quaternion
+        output = evaluate_core_operation(operation, tuple(source_local))
+        expected_basis = target_rest.inverted() @ Quaternion(output)
+        assert quaternion_error(actual_basis, tuple(expected_basis)) < 1e-5
+        source_pose.rotation_quaternion = Quaternion((1.0, 0.0, 0.0, 0.0))
+        bpy.context.view_layer.update()
+
     state.operations[0].editable = False
     assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
     assert len(state.operations) == 0, "只读 SOP 条目也应允许从列表删除"
@@ -124,17 +152,17 @@ with tempfile.TemporaryDirectory() as temporary:
     ) == {"FINISHED"}
     assert len(state.operations) == 2
     assert state.active_operation_index == 1
-    assert state.operations[1].preview_status == "approximate_unchecked"
+    assert state.operations[1].preview_status == "exact_driver"
     skirt_constraints = [
         constraint for constraint in armature.pose.bones["Skirt_B_01"].constraints
         if constraint.name.startswith(CONSTRAINT_PREFIX)
     ]
-    assert len(skirt_constraints) == 2
-    assert all(constraint.target_space == "LOCAL_OWNER_ORIENT" for constraint in skirt_constraints)
-    swing_constraint = next(
-        constraint for constraint in skirt_constraints if "Swing" in constraint.name
-    )
-    assert swing_constraint.use_x and swing_constraint.use_y and not swing_constraint.use_z
+    assert not skirt_constraints
+    assert len(sop_drivers("Skirt_B_01")) == 4
+    state.preview_constraints = False
+    assert all(curve.mute for curve in sop_drivers("Skirt_B_01"))
+    state.preview_constraints = True
+    assert not any(curve.mute for curve in sop_drivers("Skirt_B_01"))
 
     authored = _asset_from_state(armature).operations[1]
     offset = tuple(authored.floating(value) for value in (
@@ -145,22 +173,45 @@ with tempfile.TemporaryDirectory() as temporary:
     target_rest = tuple(_export_rest_quaternion(armature, "Skirt_B_01"))
     evaluated_rest = evaluate_core_operation(authored, source_rest)
     assert quaternion_error(evaluated_rest, target_rest) < 1e-5
+    assert_exact_pose(authored, "Skirt_B_01", "_00e")
     assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
     assert len(state.operations) == 1
+    assert not sop_drivers("Skirt_B_01")
 
     assert bpy.ops.gbfr.sop_add(
         constraint_type="SKIRT_COPY_ROTATION",
         target_ref="Skirt_C_01", source_ref="_00e", axis="1",
         swing_rate=0.75, twist_rate=0.25,
     ) == {"FINISHED"}
-    assert state.operations[1].preview_status == "approximate_unchecked"
+    assert state.operations[1].preview_status == "exact_driver"
     angled_constraints = [
         constraint for constraint in armature.pose.bones["Skirt_C_01"].constraints
         if constraint.name.startswith(CONSTRAINT_PREFIX)
     ]
-    assert len(angled_constraints) == 2
+    assert not angled_constraints
+    assert len(sop_drivers("Skirt_C_01")) == 4
+    angled_operation = _asset_from_state(armature).operations[1]
+    assert_exact_pose(angled_operation, "Skirt_C_01", "_00e")
     assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
     assert len(state.operations) == 1
+    assert not sop_drivers("Skirt_C_01")
+
+    user_curve = armature.pose.bones["Skirt_C_01"].driver_add("rotation_quaternion", 0)
+    user_curve.driver.expression = "1.0"
+    assert bpy.ops.gbfr.sop_add(
+        constraint_type="SKIRT_COPY_ROTATION",
+        target_ref="Skirt_C_01", source_ref="_00e", axis="1",
+        swing_rate=0.75, twist_rate=0.25,
+    ) == {"FINISHED"}
+    assert state.operations[1].preview_status == "approximate_unchecked"
+    assert len([
+        constraint for constraint in armature.pose.bones["Skirt_C_01"].constraints
+        if constraint.name.startswith(CONSTRAINT_PREFIX)
+    ]) == 2
+    assert any(curve == user_curve for curve in armature.animation_data.drivers)
+    assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
+    assert any(curve == user_curve for curve in armature.animation_data.drivers)
+    assert armature.pose.bones["Skirt_C_01"].driver_remove("rotation_quaternion", 0)
 
     assert bpy.ops.gbfr.sop_add(
         constraint_type="SKIRT_COPY_ROTATION",
@@ -181,8 +232,8 @@ with tempfile.TemporaryDirectory() as temporary:
         constraint for bone in armature.pose.bones for constraint in bone.constraints
         if constraint.name.startswith(CONSTRAINT_PREFIX)
     ]
-    assert len(constraints) == 1
-    assert abs(constraints[0].influence - 0.6) < 1e-6
+    assert not constraints
+    assert len(sop_drivers("_a50")) == 4
     assert not (root / paths["unpack_sop"]).exists(), "Blender 内编辑不应自动写文件"
 
     staged = root / "staging/pl9999.sop"
@@ -219,5 +270,19 @@ with tempfile.TemporaryDirectory() as temporary:
     result = bpy.ops.gbfr.sop_save()
     assert result == {"FINISHED"}, result
     assert unpack_sop.read_bytes() == source_bytes
+
+    saved_blend = root / "sop-driver-persistence.blend"
+    assert bpy.ops.wm.save_as_mainfile(filepath=str(saved_blend)) == {"FINISHED"}
+    assert bpy.ops.wm.open_mainfile(filepath=str(saved_blend)) == {"FINISHED"}
+    reloaded_armature = bpy.data.objects["SOP Armature"]
+    bpy.context.scene.frame_set(bpy.context.scene.frame_current)
+    reloaded_path = reloaded_armature.pose.bones["_a50"].path_from_id("rotation_quaternion")
+    reloaded_drivers = [
+        curve for curve in reloaded_armature.animation_data.drivers
+        if curve.data_path == reloaded_path
+        and curve.driver.expression.startswith(DRIVER_EXPRESSION_PREFIX)
+    ]
+    assert len(reloaded_drivers) == 4
+    assert all(curve.driver.is_valid for curve in reloaded_drivers)
 
 print("GBFR SOP edit/export/restore smoke test passed")

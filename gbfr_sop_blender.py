@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 import hashlib
 from itertools import permutations
 import json
 from pathlib import Path
 
 import bpy
+from bpy.app.handlers import persistent
 from mathutils import Euler, Quaternion, Vector
 from bpy.props import (
     BoolProperty, CollectionProperty, EnumProperty, FloatProperty,
@@ -31,7 +33,11 @@ from .utils import bone_names_mapping
 
 
 CONSTRAINT_PREFIX = "GBFR SOP "
+DRIVER_FUNCTION_NAME = "gbfr_sop_driver_quaternion"
+DRIVER_EXPRESSION_PREFIX = f"{DRIVER_FUNCTION_NAME}("
+DRIVER_DATA_PROPERTY = "gbfr_sop_driver_data"
 STATUS_LABELS = {
+    "exact_driver": "已创建 Blender 精确驱动预览",
     "approximate_constraint": "已创建 Blender 近似约束",
     "approximate_unchecked": "已创建 Blender 近似约束（无静止姿态基线）",
     "rest_guard_failed": "静止姿态自检失败，未执行",
@@ -135,6 +141,48 @@ def _operation_offset_quaternion(operation: SopOperation) -> Quaternion:
     return Euler(values, "XYZ").to_quaternion().normalized()
 
 
+@lru_cache(maxsize=256)
+def _driver_operation(axis, swing_rate, twist_rate, offset_x, offset_y, offset_z):
+    return make_swing_twist_operation(
+        0, 1, int(axis), float(swing_rate), float(twist_rate),
+        offset_xyz=(float(offset_x), float(offset_y), float(offset_z)),
+    )
+
+
+def _sop_driver_quaternion(
+    basis_w, basis_x, basis_y, basis_z,
+    axis, swing_rate, twist_rate, offset_x, offset_y, offset_z,
+    source_rest_w, source_rest_x, source_rest_y, source_rest_z,
+    target_rest_w, target_rest_x, target_rest_y, target_rest_z,
+    component,
+):
+    try:
+        source_basis = Quaternion((basis_w, basis_x, basis_y, basis_z))
+        if source_basis.magnitude < 1e-8:
+            source_basis = Quaternion((1.0, 0.0, 0.0, 0.0))
+        else:
+            source_basis.normalize()
+        source_rest = Quaternion((
+            source_rest_w, source_rest_x, source_rest_y, source_rest_z,
+        )).normalized()
+        target_rest = Quaternion((
+            target_rest_w, target_rest_x, target_rest_y, target_rest_z,
+        )).normalized()
+        source_local = source_rest @ source_basis
+        operation = _driver_operation(
+            int(axis), float(swing_rate), float(twist_rate),
+            float(offset_x), float(offset_y), float(offset_z),
+        )
+        output = evaluate_core_operation(operation, tuple(source_local))
+        if output is None:
+            raise ValueError("SOP driver core evaluation failed")
+        target_basis = target_rest.inverted() @ Quaternion(output).normalized()
+        target_basis.normalize()
+        return float(target_basis[int(component)])
+    except (ValueError, TypeError, ZeroDivisionError):
+        return 1.0 if int(component) == 0 else 0.0
+
+
 def _fit_operation_rest_offset(
     armature, operation: SopOperation, target_name: str, source_name: str,
 ) -> SopOperation:
@@ -192,10 +240,36 @@ def _set_constraints_enabled(armature, enabled):
                 constraint.mute = not enabled
 
 
+def _is_sop_driver(curve) -> bool:
+    driver = getattr(curve, "driver", None)
+    return driver is not None and driver.expression.startswith(DRIVER_EXPRESSION_PREFIX)
+
+
+def _remove_imported_drivers(armature) -> None:
+    animation_data = armature.animation_data
+    if animation_data is not None:
+        for curve in tuple(animation_data.drivers):
+            if _is_sop_driver(curve):
+                animation_data.drivers.remove(curve)
+    for pose_bone in armature.pose.bones:
+        if DRIVER_DATA_PROPERTY in pose_bone:
+            del pose_bone[DRIVER_DATA_PROPERTY]
+
+
+def _set_drivers_enabled(armature, enabled) -> None:
+    animation_data = armature.animation_data
+    if animation_data is None:
+        return
+    for curve in animation_data.drivers:
+        if _is_sop_driver(curve):
+            curve.mute = not enabled
+
+
 def _preview_update(state, _context):
     for obj in bpy.data.objects:
         if obj.type == "ARMATURE" and hasattr(obj, "gbfr_sop") and obj.gbfr_sop.as_pointer() == state.as_pointer():
             _set_constraints_enabled(obj, state.preview_constraints)
+            _set_drivers_enabled(obj, state.preview_constraints)
             break
 
 
@@ -265,8 +339,8 @@ class GBFRSopStateProperties(PropertyGroup):
     )
     operation_search: StringProperty(name="搜索约束")
     preview_constraints: BoolProperty(
-        name="启用核心约束近似预览", default=True, update=_preview_update,
-        description="只启用通过静止姿态自检的 Swing/Twist 近似；属性修改只作用于 Blender 内存",
+        name="启用 SOP 预览", default=True, update=_preview_update,
+        description="启用精确四元数驱动或安全回退约束；属性修改只作用于 Blender 内存",
     )
     imported_constraint_count: IntProperty(default=0)
     preview_operation_count: IntProperty(default=0)
@@ -424,6 +498,98 @@ def _sync_workspace_paths(state, bundle: ModelBundle) -> None:
     state.source_baseline_path = str(bundle.sop_source or "")
 
 
+def _rotation_is_animated(armature, data_path: str) -> bool:
+    animation_data = armature.animation_data
+    if animation_data is None:
+        return False
+    actions = []
+    if animation_data.action is not None:
+        actions.append(animation_data.action)
+    for track in animation_data.nla_tracks:
+        for strip in track.strips:
+            if strip.action is not None:
+                actions.append(strip.action)
+    return any(
+        curve.data_path == data_path
+        for action in actions
+        for curve in getattr(action, "fcurves", ())
+    )
+
+
+def _rotation_has_driver(armature, data_path: str) -> bool:
+    animation_data = armature.animation_data
+    return animation_data is not None and any(
+        curve.data_path == data_path for curve in animation_data.drivers
+    )
+
+
+def _create_exact_drivers(armature, operation, mapping) -> int:
+    target_name = mapping.get(operation.target_bone)
+    source_name = mapping.get(operation.source_bone)
+    target = armature.pose.bones.get(target_name) if target_name else None
+    source = armature.pose.bones.get(source_name) if source_name else None
+    if target is None or source is None:
+        return 0
+    if target.rotation_mode != "QUATERNION" or source.rotation_mode != "QUATERNION":
+        return 0
+    data_path = target.path_from_id("rotation_quaternion")
+    if _rotation_is_animated(armature, data_path) or _rotation_has_driver(armature, data_path):
+        return 0
+
+    axis = dominant_axis(operation)
+    swing_rate = operation.floating(SWING_RATE_PROPERTY)
+    twist_rate = operation.floating(TWIST_RATE_PROPERTY)
+    if axis is None or swing_rate is None or twist_rate is None:
+        return 0
+    offset = tuple(
+        operation.floating(value, 0.0) or 0.0
+        for value in (OFFSET_X_PROPERTY, OFFSET_Y_PROPERTY, OFFSET_Z_PROPERTY)
+    )
+    source_rest = tuple(_export_rest_quaternion(armature, source_name))
+    target_rest = tuple(_export_rest_quaternion(armature, target_name))
+    static_arguments = (
+        axis, swing_rate, twist_rate, *offset, *source_rest, *target_rest,
+    )
+    target[DRIVER_DATA_PROPERTY] = [float(value) for value in static_arguments]
+    static_path = target.path_from_id(f'["{DRIVER_DATA_PROPERTY}"]')
+    source_path = source.path_from_id("rotation_quaternion")
+    created = []
+    try:
+        for component in range(4):
+            curve = target.driver_add("rotation_quaternion", component)
+            created.append(curve)
+            driver = curve.driver
+            driver.type = "SCRIPTED"
+            for source_component in range(4):
+                variable = driver.variables.new()
+                variable.name = f"sop_q{source_component}"
+                variable.type = "SINGLE_PROP"
+                variable.targets[0].id = armature
+                variable.targets[0].data_path = f"{source_path}[{source_component}]"
+            for static_index in range(len(static_arguments)):
+                variable = driver.variables.new()
+                variable.name = f"sop_d{static_index}"
+                variable.type = "SINGLE_PROP"
+                variable.targets[0].id = armature
+                variable.targets[0].data_path = f"{static_path}[{static_index}]"
+            arguments = ",".join((
+                "sop_q0", "sop_q1", "sop_q2", "sop_q3",
+                *(f"sop_d{index}" for index in range(len(static_arguments))),
+                str(component),
+            ))
+            driver.expression = f"{DRIVER_FUNCTION_NAME}({arguments})"
+        return 1
+    except (RuntimeError, TypeError, ValueError):
+        animation_data = armature.animation_data
+        if animation_data is not None:
+            for curve in created:
+                if any(value == curve for value in animation_data.drivers):
+                    animation_data.drivers.remove(curve)
+        if DRIVER_DATA_PROPERTY in target:
+            del target[DRIVER_DATA_PROPERTY]
+        return 0
+
+
 def _add_copy_rotation(
     armature, target_name, source_name, operation_index, label, axes, rate,
     *, inversions=None, target_space="LOCAL",
@@ -510,11 +676,14 @@ def rebuild_sop_preview(armature) -> None:
     mapping = _bone_map(armature)
     rest = _rest_quaternions(armature)
     _remove_imported_constraints(armature)
+    _remove_imported_drivers(armature)
     state.imported_constraint_count = 0
     state.preview_operation_count = 0
     state.guarded_count = 0
     state.unresolved_count = 0
     state.missing_count = 0
+    prepared = []
+    target_counts = {}
     for index, item in enumerate(state.operations):
         try:
             operation = _operation_from_item(item, armature, index)
@@ -522,14 +691,33 @@ def rebuild_sop_preview(armature) -> None:
         except (ValueError, TypeError, json.JSONDecodeError):
             item.preview_status = "invalid_core_fields"
             state.missing_count += 1
+            prepared.append(None)
             continue
+        prepared.append((operation, status))
+        target_counts[operation.target_bone] = target_counts.get(operation.target_bone, 0) + 1
+
+    for item, prepared_item in zip(state.operations, prepared):
+        if prepared_item is None:
+            continue
+        operation, status = prepared_item
         item.target_bone = operation.target_bone
         item.source_bone = operation.source_bone
         item.target_name = _display_bone(operation.target_bone, mapping)
         item.source_name = _display_bone(operation.source_bone, mapping)
         item.preview_status = status
         if status in {"approximate_constraint", "approximate_unchecked"}:
-            created = _create_approximate_constraints(armature, operation, mapping)
+            swing_rate = operation.floating(SWING_RATE_PROPERTY, 0.0) or 0.0
+            twist_rate = operation.floating(TWIST_RATE_PROPERTY, 0.0) or 0.0
+            if abs(swing_rate) <= 1e-8 and abs(twist_rate) <= 1e-8:
+                item.preview_status = "zero_effect"
+                continue
+            created = 0
+            if target_counts.get(operation.target_bone) == 1:
+                created = _create_exact_drivers(armature, operation, mapping)
+                if created:
+                    item.preview_status = "exact_driver"
+            if not created:
+                created = _create_approximate_constraints(armature, operation, mapping)
             state.imported_constraint_count += created
             if created:
                 state.preview_operation_count += 1
@@ -542,6 +730,7 @@ def rebuild_sop_preview(armature) -> None:
         else:
             state.missing_count += 1
     _set_constraints_enabled(armature, state.preview_constraints)
+    _set_drivers_enabled(armature, state.preview_constraints)
 
 
 def populate_sop_state(
@@ -554,6 +743,7 @@ def populate_sop_state(
     state.suspend_updates = True
     state.operations.clear()
     _remove_imported_constraints(armature)
+    _remove_imported_drivers(armature)
     state.minfo_path = str(bundle.minfo)
     state.edit_path = str(bundle.sop_edit)
     state.source_baseline_path = str(bundle.sop_source or "")
@@ -591,7 +781,7 @@ def populate_sop_state(
     state.suspend_updates = False
     rebuild_sop_preview(armature)
     state.last_status = (
-        f"读取 {len(state.operations)} 条 SOP；创建 {state.imported_constraint_count} 个 Blender 近似约束"
+        f"读取 {len(state.operations)} 条 SOP；创建 {state.preview_operation_count} 个 Blender 预览"
     )
 
 
@@ -745,7 +935,7 @@ class GBFR_OT_SopFullCopy(Operator):
 class GBFR_OT_SopPreviewRefresh(Operator):
     bl_idname = "gbfr.sop_preview_refresh"
     bl_label = "更新约束预览"
-    bl_description = "按当前未导出参数重建 Blender Copy Rotation 近似约束"
+    bl_description = "按当前未导出参数重建 Blender SOP 驱动或回退约束"
 
     def execute(self, context):
         armature = _armature(context)
@@ -847,6 +1037,7 @@ class GBFR_UL_SopOperations(UIList):
 
     def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_propname, index):
         icons = {
+            "exact_driver": "DRIVER",
             "approximate_constraint": "CONSTRAINT",
             "approximate_unchecked": "CONSTRAINT",
             "rest_guard_failed": "ERROR",
@@ -984,13 +1175,28 @@ classes = (
 )
 
 
+@persistent
+def _sop_driver_load_post(_unused):
+    bpy.app.driver_namespace[DRIVER_FUNCTION_NAME] = _sop_driver_quaternion
+
+
 def register():
+    bpy.app.driver_namespace[DRIVER_FUNCTION_NAME] = _sop_driver_quaternion
+    if _sop_driver_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_sop_driver_load_post)
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Object.gbfr_sop = PointerProperty(type=GBFRSopStateProperties)
 
 
 def unregister():
+    for obj in bpy.data.objects:
+        if obj.type == "ARMATURE":
+            _remove_imported_drivers(obj)
+    if bpy.app.driver_namespace.get(DRIVER_FUNCTION_NAME) is _sop_driver_quaternion:
+        del bpy.app.driver_namespace[DRIVER_FUNCTION_NAME]
+    if _sop_driver_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_sop_driver_load_post)
     if hasattr(bpy.types.Object, "gbfr_sop"):
         del bpy.types.Object.gbfr_sop
     for cls in reversed(classes):
