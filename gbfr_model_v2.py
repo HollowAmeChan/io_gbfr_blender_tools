@@ -426,11 +426,10 @@ def read_some_data(
 			mesh_obj.parent = lod_object
 
 			vert_index_cache = {}
-			VertsCreationOrderList = []
 
 			# Build mesh
 			bmesh_data = bmesh.new() # Create bmesh
-			normals = []
+			source_vertex_layer = bmesh_data.verts.layers.int.new("gbfr_source_vertex_index")
 			UV0_Layer = bmesh_data.loops.layers.uv.new("UV0") # Create UV Layer
 			mesh_data.uv_layers.new(name="UV0")
 			if UV1Table: 
@@ -476,8 +475,8 @@ def read_some_data(
 							vert = vert_index_cache.get(face[v])
 							if vert is None:
 								vert = bmesh_data.verts.new(VertTable[face[v]])
+								vert[source_vertex_layer] = face[v]
 								vert_index_cache[face[v]] = vert # Chache the vert
-								VertsCreationOrderList.append(face[v]) # Record when vert created
 							verts.append(vert)
 						v1 = verts[0] ; v2 = verts[1] ; v3 = verts[2]
 						# Build Face
@@ -495,7 +494,6 @@ def read_some_data(
 								if UV1Table:
 									uv1_index = face[vert_idx]
 									loop[UV1_Layer].uv = UV1Table[uv1_index] if uv1_index < len(UV1Table) else (0.0, 0.0)
-								normals.append(NormalTable[face[vert_idx]])
 								vert_idx -= 1
 							# Assign Materials
 							bmesh_face.material_index = mat_index
@@ -507,8 +505,17 @@ def read_some_data(
 						raise err
 			bmesh_data.to_mesh(mesh_data) # Update mesh
 			bmesh_data.faces.ensure_lookup_table()
+			source_vertex_indices = [
+				item.value for item in mesh_data.attributes["gbfr_source_vertex_index"].data
+			]
 
-			# Assign Normals | Can't directly assign tangents in blender, so use this instead
+			# BMesh may reorder faces and loops when converting to Mesh. Resolve each
+			# final loop through its Blender vertex back to the source mmesh vertex;
+			# a list collected while constructing BMesh faces is not loop-order safe.
+			normals = [
+				NormalTable[source_vertex_indices[loop.vertex_index]]
+				for loop in mesh_data.loops
+			]
 			mesh_data.normals_split_custom_set(normals)
 			try:
 				mesh_data.calc_tangents()
@@ -525,7 +532,7 @@ def read_some_data(
 				mesh_data.color_attributes.new(name=f"COLOR", type='BYTE_COLOR', domain='POINT')
 
 			# Assign additional vertex data buffers
-			for v, vert in enumerate(VertsCreationOrderList):
+			for v, vert in enumerate(source_vertex_indices):
 				if ColorTable: # Assign Vertex colors
 					mesh_data.color_attributes[f"COLOR"].data[v].color = ColorTable[vert] if vert < len(ColorTable) else (1.0, 1.0, 1.0, 1.0)
 				if armature and vert < len(WeightIndicesTable) and vert < len(WeightValuesTable): # Create Vertex groups and assign weights

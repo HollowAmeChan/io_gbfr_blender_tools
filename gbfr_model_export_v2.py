@@ -543,39 +543,89 @@ def _is_exportable_mesh(obj):
 	)
 
 
-def build_mesh_vert_dictionary(mesh_data):
+def _pack_vertex_color(color):
+	return struct.pack(
+		'<BBBB',
+		*(max(0, min(255, int(component * 255))) for component in color),
+	)
+
+
+def build_mesh_export_data(mesh_data):
+	"""Build one game vertex for every distinct exported corner signature.
+
+	GBFR stores normal, tangent and UV data per vertex, while Blender stores
+	those values per face corner. A Blender vertex on a sharp edge or UV seam
+	must therefore be duplicated in the exported vertex/index buffers.
+	"""
 	if not mesh_data.uv_layers:
 		raise UserWarning(format_exception(
 			f'Mesh {mesh_data.name} has no UV maps; a UV0 map is required.'
 		))
-	uv_data = mesh_data.uv_layers.active.data
-	mesh_vert_table = {}
-	
+	uv0_layer = mesh_data.uv_layers.get("UV0") or mesh_data.uv_layers[0]
+	uv1_layer = mesh_data.uv_layers.get("UV1")
+	if uv1_layer is None and len(mesh_data.uv_layers) > 1:
+		uv1_layer = next(layer for layer in mesh_data.uv_layers if layer != uv0_layer)
+	uv_data = uv0_layer.data
+	uv1_data = uv1_layer.data if uv1_layer is not None else None
+	color_layer = mesh_data.color_attributes.get("COLOR")
+	loop_records = {}
+	ordered_loop_ids = []
+	first_loop_by_vertex = {}
+
 	for face in mesh_data.polygons:
 		for vert_id, loop_id in zip(face.vertices, face.loop_indices):
-			if vert_id in mesh_vert_table:
-				continue
 			v = mesh_data.vertices[vert_id]
 			loop = mesh_data.loops[loop_id]
 			tangent = orthonormalize_tangent(loop.normal, loop.tangent)
-			vert_buffer = []
-			vert_buffer.append(struct.pack('<fff', v.undeformed_co[0], v.undeformed_co[1], v.undeformed_co[2]))
-			vert_buffer.append(struct.pack('<eee', -loop.normal[0], -loop.normal[1], -loop.normal[2]))
-			vert_buffer.append(b'\x00')
-			vert_buffer.append(b'\x00')
-			vert_buffer.append(struct.pack('<eee', tangent[0], tangent[1], tangent[2]))
-			vert_buffer.append(struct.pack('<e', -loop.bitangent_sign))
+			normal_bytes = struct.pack('<eee', -loop.normal[0], -loop.normal[1], -loop.normal[2])
+			tangent_bytes = struct.pack('<eee', tangent[0], tangent[1], tangent[2])
+			sign_bytes = struct.pack('<e', -loop.bitangent_sign)
 			uv = uv_data[loop_id].uv
-			vert_buffer.append(struct.pack('<ee', uv[0], uv[1]))
-			
-			mesh_vert_table[vert_id] = vert_buffer
+			uv0_bytes = struct.pack('<ee', uv[0], uv[1])
+			uv1_bytes = None
+			if uv1_data is not None:
+				uv1 = uv1_data[loop_id].uv
+				uv1_bytes = struct.pack('<ee', uv1[0], uv1[1])
+			color_bytes = None
+			if color_layer is not None:
+				color_index = loop_id if color_layer.domain == 'CORNER' else vert_id
+				color_bytes = _pack_vertex_color(color_layer.data[color_index].color)
+			signature = (normal_bytes, tangent_bytes, sign_bytes, uv0_bytes, uv1_bytes, color_bytes)
+			loop_records[loop_id] = {
+				'source_vertex': vert_id,
+				'source_loop': loop_id,
+				'signature': signature,
+				'vertex_buffer': [
+					struct.pack('<fff', v.undeformed_co[0], v.undeformed_co[1], v.undeformed_co[2]),
+					normal_bytes, b'\x00', b'\x00', tangent_bytes, sign_bytes, uv0_bytes,
+				],
+				'uv1': uv1_bytes,
+				'color': color_bytes,
+			}
+			ordered_loop_ids.append(loop_id)
+			first_loop_by_vertex.setdefault(vert_id, loop_id)
 
-	# Sort the vert_table	
-	keys = list(mesh_vert_table.keys())
-	keys.sort()
-	mesh_vert_table = {i: mesh_vert_table[i] for i in keys}
+	records = []
+	index_by_signature = {}
+	for vertex in mesh_data.vertices:
+		if vertex.index not in first_loop_by_vertex:
+			continue
+		loop_id = first_loop_by_vertex[vertex.index]
+		record = loop_records[loop_id]
+		index_by_signature[(vertex.index, record['signature'])] = len(records)
+		records.append(record)
+	for loop_id in ordered_loop_ids:
+		record = loop_records[loop_id]
+		key = (record['source_vertex'], record['signature'])
+		if key not in index_by_signature:
+			index_by_signature[key] = len(records)
+			records.append(record)
 
-	return mesh_vert_table
+	loop_to_export_index = {
+		loop_id: index_by_signature[(record['source_vertex'], record['signature'])]
+		for loop_id, record in loop_records.items()
+	}
+	return records, loop_to_export_index
 
 
 # =======================================================================================================================
@@ -667,7 +717,8 @@ def write_some_data(
 		bpy.context.scene.tool_settings.mesh_select_mode=mesh_select_mode_backup # Restore the mesh select mode
 
 		utils_set_mode('OBJECT')
-		mesh_data.calc_tangents() # mesh.calc_tangents(uvmap='Float2')
+		uv0_layer = mesh_data.uv_layers.get("UV0") or mesh_data.uv_layers[0]
+		mesh_data.calc_tangents(uvmap=uv0_layer.name)
 
 		# Limit and normalize weights
 		if mesh_obj.vertex_groups:
@@ -848,8 +899,12 @@ def write_some_data(
 				mesh_name = mesh_obj.name.split('.')[0]
 				
 				# Build the Vertex Table
-				mesh_vert_dict = build_mesh_vert_dictionary(mesh_data)
-				vert_table.extend(list(mesh_vert_dict.values()))
+				mesh_export_records, mesh_loop_to_export_index = build_mesh_export_data(mesh_data)
+				vert_table.extend(record['vertex_buffer'] for record in mesh_export_records)
+				used_source_vertices = {record['source_vertex'] for record in mesh_export_records}
+				split_vertex_count = len(mesh_export_records) - len(used_source_vertices)
+				if split_vertex_count:
+					print(f"{mesh_obj.name}: duplicated {split_vertex_count} vertex record(s) for corner attributes")
 
 				print(f"4a. Elapsed time: {time.perf_counter() - export_section_timer_start:.6f} seconds | LOD{lod_obj_index}_{mesh_obj.name} - Build Vertex Table")
 				export_section_timer_start = time.perf_counter() # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
@@ -875,7 +930,8 @@ def write_some_data(
 					mesh_world_matrix =  mesh_obj.matrix_world
 					vertex_groups_length = len(mesh_obj.vertex_groups)
 					padding_value = struct.pack('<H', 0)
-					for v_index, v in enumerate(mesh_data.vertices):
+					for record in mesh_export_records:
+						v = mesh_data.vertices[record['source_vertex']]
 						active_groups = [group for group in v.groups if group.weight > 0.0]
 						if not active_groups:
 							raise UserWarning(format_exception(
@@ -932,28 +988,15 @@ def write_some_data(
 				
 				# Build Vertex Colors and UV1 Coordinates
 				# TODO: account for funny meshes that don't have Vertex Colors and UV1 coordinates, but others do (?) Does this matter?
-				color_layer = mesh_data.color_attributes.get("COLOR")
-
-				uv1_coords = []
-				if len(mesh_data.uv_layers)>1:
-					uv1_coords = [() for v in mesh_data.vertices]
-					for loop in mesh_data.loops:
-						uv1_coords[loop.vertex_index] = mesh_data.uv_layers[1].data[loop.index].uv
-
-				for v in mesh_data.vertices:
+				for record in mesh_export_records:
+					v = mesh_data.vertices[record['source_vertex']]
 					# VERTEX COLORS
 					if lod_has_color:
-						color = color_layer.data[v.index].color if color_layer else (1.0, 1.0, 1.0, 1.0)
-						r = int(color[0] * 255)
-						g = int(color[1] * 255)
-						b = int(color[2] * 255)
-						a = int(color[3] * 255)
-						vertex_colors_table.append(struct.pack('<BBBB', r, g, b, a))
+						vertex_colors_table.append(record['color'] or b'\xff\xff\xff\xff')
 
 					# TEXTURE COORDINATES
 					if lod_has_uv1:
-						uv1 = uv1_coords[v.index] if uv1_coords and uv1_coords[v.index] else (0.0, 0.0)
-						tex_coords_table.append(struct.pack('<ee', uv1[0], uv1[1]))
+						tex_coords_table.append(record['uv1'] or struct.pack('<ee', 0.0, 0.0))
 
 					# CALCULATE BOUNDING SPHERE
 					if lod_obj_index > 0: continue # Only calculate for first LOD
@@ -1008,13 +1051,15 @@ def write_some_data(
 				mesh_id = mesh_names_list.index(mesh_name)
 
 				for face in mesh_data.polygons:
+					if len(face.loop_indices) != 3:
+						raise RuntimeError(f"Mesh {mesh_name} contains a non-triangle after export triangulation")
 					# Build face table, offset vertex indices with the length of the vert_table
 					face_table.append(
 						struct.pack(
 							'<III', 
-							face.vertices[0] + face_table_offset, 
-							face.vertices[1] + face_table_offset, 
-							face.vertices[2] + face_table_offset
+							mesh_loop_to_export_index[face.loop_indices[0]] + face_table_offset,
+							mesh_loop_to_export_index[face.loop_indices[1]] + face_table_offset,
+							mesh_loop_to_export_index[face.loop_indices[2]] + face_table_offset,
 							)
 						)
 

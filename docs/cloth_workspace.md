@@ -86,3 +86,9 @@ blender --background --python test/blender_clp_tools_smoke.py -- <工作区 sour
 基础色 DDS 按以下顺序查找：`unpack/data/granite/2k`、`unpack/data/texture/2k`、`unpack/data/granite/4k`、`unpack/data/texture/4k`。文件名同时支持 `<name>.dds` 和旧 WTB 解码生成的 `<name>_0.dds`。Blender 4.5 可以直接读取这些 DDS，不需要预先转换格式。
 
 当前材质是面向制作预览的简化无光照材质：DDS 颜色连接到 Emission，Transparent BSDF 与 Emission 通过 Mix Shader 混合，DDS alpha 作为混合因子，材质表面模式设为 Alpha Blend。没有普通 albedo 的眼球槽会按各自 alpha 依次合成结膜、虹膜和高光 DDS，再连接到同一个 Emission 输出。它不会复现游戏中的 PBR、MSK 通道、法线、描边或颜色参数。导入结果和缺图数量记录在网格对象的 `gbfr_material_applied`、`gbfr_material_missing` 属性中；每个材质还会记录所用 `0.mmat.json` 和 DDS 路径，便于定位资源。
+
+## 法线、锐边和材质分配导出
+
+GBFR 顶点只有一套法线、切线与 UV，Blender 同一个位置顶点的不同 face corner 可以拥有不同数据。模型导出会按实际写入的半精度法线、切线、bitangent sign、UV0、UV1 和 corner color 自动复制游戏顶点，并把原顶点的权重同步复制到每个副本。Blender 的锐边、平面着色、自定义 split normal 和 UV seam 因此可以直接导出，不需要为了格式限制手工把整张网格拆成独立三角形。
+
+切线固定用 `UV0` 图层计算；存在 `UV1` 时作为第二套缓冲写出。普通的 Blender “指定材质”操作受支持，导出会按材质重排三角形索引并生成连续 chunk。这个索引变化是格式所需，不会让位置、法线、UV 或权重错配。不要单独删除 source 材质槽：当前插件不会同步删除所有配色 MMAT 中的同号记录，也不会替用户重编号后续 MaterialID。
