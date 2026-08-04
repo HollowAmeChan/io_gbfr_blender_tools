@@ -48,6 +48,9 @@ class SopTests(unittest.TestCase):
             self.assertLess(quaternion_error(output, expected), 1e-6)
             rest = {0x00B: source, 0xA0B: expected}
             self.assertEqual("approximate_constraint", guarded_preview_status(asset.operations[0], rest))
+            # Official SOP assets contain small static residuals (up to about 0.51 degrees).
+            rest[0xA0B] = (math.cos(0.255), math.sin(0.255), 0.0, 0.0)
+            self.assertEqual("approximate_constraint", guarded_preview_status(asset.operations[0], rest))
             rest[0xA0B] = (1.0, 0.0, 0.0, 0.0)
             self.assertEqual("rest_guard_failed", guarded_preview_status(asset.operations[0], rest))
 

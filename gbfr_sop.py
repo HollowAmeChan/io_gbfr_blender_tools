@@ -24,6 +24,7 @@ SWING_RATE_PROPERTY = 0x9BE488F1
 OFFSET_X_PROPERTY = 0x597EA425
 OFFSET_Y_PROPERTY = 0x2E7994B3
 OFFSET_Z_PROPERTY = 0xB770C509
+REST_GUARD_QUATERNION_TOLERANCE = 0.01
 
 
 @dataclass(frozen=True)
@@ -383,7 +384,11 @@ def guarded_preview_status(operation: SopOperation, rest_quaternions: dict[int, 
     output = evaluate_core_operation(operation, source)
     if output is None:
         return "invalid_core_fields"
-    return "approximate_constraint" if quaternion_error(output, target) <= 1e-4 else "rest_guard_failed"
+    return (
+        "approximate_constraint"
+        if quaternion_error(output, target) <= REST_GUARD_QUATERNION_TOLERANCE
+        else "rest_guard_failed"
+    )
 
 
 def dominant_axis(operation: SopOperation) -> int | None:
