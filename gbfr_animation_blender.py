@@ -8,6 +8,10 @@ from pathlib import Path
 import uuid
 
 import bpy
+try:
+    import numpy as np
+except ImportError:  # Blender normally bundles NumPy; keep the addon importable elsewhere.
+    np = None
 from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, CollectionProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import Operator, Panel, PropertyGroup, UIList
@@ -843,6 +847,127 @@ def _selected_bone_rebase_samples(
     return result, processed, already_rebased & set(selected_bone_ids)
 
 
+def _numpy_track_samples(track, frame_count):
+    """Vectorized MOT sampling for the batch conversion path."""
+    if np is None:
+        return tuple(float(track.sample(frame)) for frame in range(frame_count))
+    frames = np.arange(frame_count, dtype=np.float64)
+    if not track.keys or len(track.keys) == 1 or track.curve == "constant":
+        value = float(track.keys[0].value) if track.keys else 0.0
+        return np.full(frame_count, value, dtype=np.float64)
+    key_frames = np.asarray([key.frame for key in track.keys], dtype=np.float64)
+    values = np.asarray([key.value for key in track.keys], dtype=np.float64)
+    indices = np.searchsorted(key_frames, frames, side="right") - 1
+    before = indices < 0
+    after = frames >= key_frames[-1]
+    indices = np.clip(indices, 0, len(key_frames) - 2)
+    first_frame = key_frames[indices]
+    second_frame = key_frames[indices + 1]
+    span = second_frame - first_frame
+    t = np.divide(
+        frames - first_frame, span,
+        out=np.zeros_like(frames), where=span > 0.0,
+    )
+    first = values[indices]
+    second = values[indices + 1]
+    if track.curve == "linear":
+        result = first + (second - first) * t
+    else:
+        incoming = np.asarray([key.in_tangent for key in track.keys], dtype=np.float64)
+        outgoing = np.asarray([key.out_tangent for key in track.keys], dtype=np.float64)
+        first_in = outgoing[indices]
+        second_in = incoming[indices + 1]
+        t2 = t * t
+        t3 = t2 * t
+        result = (
+            (2.0 * t3 - 3.0 * t2 + 1.0) * first
+            + (t3 - 2.0 * t2 + t) * first_in
+            + (-2.0 * t3 + 3.0 * t2) * second
+            + (t3 - t2) * second_in
+        )
+    zero_span = span <= 0.0
+    if np.any(zero_span):
+        result[zero_span] = second[zero_span]
+    result[before] = values[0]
+    result[after] = values[-1]
+    return result
+
+
+def _direct_rebased_clip_samples(armature, clip, selected_bone_ids, source_skeleton_rest):
+    """Sample and rebase a source clip without Blender Actions or frame updates."""
+    runtime = _make_runtime(armature, clip, rest_area="source")
+    rest = runtime["rest"]
+    selected = set(selected_bone_ids)
+    track_values = [_numpy_track_samples(track, clip.frame_count) for track in clip.tracks]
+    selected_track_indices = defaultdict(list)
+    for index, track in enumerate(clip.tracks):
+        bone_id = 0x900 if track.bone_id == -1 else int(track.bone_id)
+        if bone_id in selected and track.property in {0, 1, 2, 3, 4, 5, 7, 8, 9}:
+            selected_track_indices[bone_id].append(index)
+    rebased = {}
+    processed = set()
+    for bone_id in sorted(selected):
+        tracks = runtime["tracks"].get(bone_id)
+        source = rest.get(bone_id)
+        if not tracks or source is None or bone_id not in source_skeleton_rest or not selected_track_indices[bone_id]:
+            continue
+        values = source_skeleton_rest[bone_id]
+        source_rest = Matrix.LocRotScale(
+            Vector(values["position"]), Quaternion(values["rotation"]),
+            Vector(values["scale"]),
+        )
+        rebased[bone_id] = (source, source_rest)
+        processed.add(bone_id)
+
+    samples = [values.copy() if hasattr(values, "copy") else list(values) for values in track_values]
+    previous_eulers = {}
+    for frame in range(clip.frame_count):
+        output_matrices = {}
+        for bone_id, (source, source_rest) in rebased.items():
+            position = list(source["position"])
+            rotation = _quaternion_to_euler(source["rotation"])
+            scale = list(source["scale"])
+            for index in selected_track_indices[bone_id]:
+                track = clip.tracks[index]
+                value = float(track_values[index][frame])
+                if track.property <= 2:
+                    position[track.property] = value
+                elif track.property <= 5:
+                    rotation[track.property - 3] = value
+                else:
+                    scale[track.property - 7] = value
+            source_local = Matrix.LocRotScale(
+                Vector(position), Euler(rotation, "XYZ").to_quaternion(), Vector(scale),
+            )
+            current_rest = source["rest_matrix"]
+            output_matrices[bone_id] = _project_trs(
+                current_rest @ source_rest.inverted_safe() @ source_local
+            )
+        for bone_id, matrix in output_matrices.items():
+            location, rotation, scale = matrix.decompose()
+            rotation.normalize()
+            if bone_id not in previous_eulers:
+                previous_eulers[bone_id] = None
+            previous = previous_eulers[bone_id]
+            euler = rotation.to_euler("XYZ", previous) if previous is not None else rotation.to_euler("XYZ")
+            previous_eulers[bone_id] = euler.copy()
+            for index in selected_track_indices[bone_id]:
+                prop = int(clip.tracks[index].property)
+                if prop <= 2:
+                    value = location[prop]
+                elif prop <= 5:
+                    value = euler[prop - 3]
+                else:
+                    value = scale[prop - 7]
+                samples[index][frame] = float(value)
+    changed_indices = {
+        index
+        for bone_id in processed
+        for index in selected_track_indices[bone_id]
+    }
+    return tuple(tuple(values) for values in samples), processed, changed_indices
+
+
 def _create_action_from_basis_samples(
     armature, state, entry, samples_by_bone, role: str, name_suffix: str,
 ):
@@ -1376,6 +1501,91 @@ class GBFR_OT_AnimationRebaseSelectedBones(Operator):
             state.last_status = str(error)
             if rollback_error is not None:
                 state.last_status += f"；回滚动画栈失败: {rollback_error}"
+            self.report({"ERROR"}, state.last_status)
+            return {"CANCELLED"}
+
+
+class GBFR_OT_AnimationBatchRebaseSource(Operator):
+    bl_idname = "gbfr.animation_batch_rebase_source"
+    bl_label = "批量换基并导出 source 动画"
+    bl_description = (
+        "从 source 导入全部 MOT，对当前选中骨骼换基，并覆盖写入对应 unpack MOT；"
+        "这是破坏性操作"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_animation
+        selected_bone_ids = _selected_bone_ids(context, armature)
+        if not selected_bone_ids:
+            self.report({"ERROR"}, "请先选择至少一根带 GBFR 骨号的骨骼")
+            return {"CANCELLED"}
+        entries = list(state.animations)
+        if not entries:
+            self.report({"ERROR"}, "当前模型没有 MOT 动画")
+            return {"CANCELLED"}
+
+        # Preflight every source and destination before modifying any unpack file.
+        prepared = []
+        try:
+            for entry in entries:
+                source = Path(bpy.path.abspath(_entry_source_preview_path(entry))).expanduser().resolve()
+                if not source.is_file():
+                    raise ValueError(f"source MOT 不存在: {source}")
+                clip = load_mot(source)
+                required = {
+                    0x900 if track.bone_id == -1 else int(track.bone_id)
+                    for track in clip.tracks
+                    if track.property in {0, 1, 2, 3, 4, 5, 7, 8, 9}
+                }
+                _require_workspace_skeleton_rest(
+                    armature, "source", required & selected_bone_ids,
+                )
+                destination = _entry_unpack_path(armature, entry)
+                prepared.append((entry, source, clip, destination))
+        except Exception as error:
+            state.last_status = str(error)
+            self.report({"ERROR"}, state.last_status)
+            return {"CANCELLED"}
+
+        written = []
+        skipped = []
+        try:
+            for entry, source, clip, destination in prepared:
+                required = {
+                    0x900 if track.bone_id == -1 else int(track.bone_id)
+                    for track in clip.tracks
+                    if track.property in {0, 1, 2, 3, 4, 5, 7, 8, 9}
+                }
+                rest = _require_workspace_skeleton_rest(
+                    armature, "source", required & selected_bone_ids,
+                )
+                samples, processed, changed_indices = _direct_rebased_clip_samples(
+                    armature, clip, selected_bone_ids, rest,
+                )
+                if not processed:
+                    skipped.append(entry.name)
+                    continue
+                write_mot_template_atomic(
+                    clip, samples, destination,
+                    verify_samples=False, verify_indices=changed_indices,
+                )
+                entry.export_exists = True
+                entry.validation_status = f"已批量换基 {len(processed)} 根并导出"
+                written.append(entry.name)
+            state.last_status = f"批量换基完成：导出 {len(written)} 个"
+            if skipped:
+                state.last_status += f"；跳过 {len(skipped)} 个无匹配轨道"
+            self.report({"INFO"}, state.last_status)
+            return {"FINISHED"}
+        except Exception as error:
+            state.last_status = f"批量换基在 {len(written)} 个后失败: {error}"
             self.report({"ERROR"}, state.last_status)
             return {"CANCELLED"}
 
@@ -2023,6 +2233,12 @@ class GBFR_PT_AnimationPreview(Panel):
                 icon="CON_TRANSFORM",
             )
             rebase.animation_index = state.active_animation_index
+            batch = layout.row(align=True)
+            batch.operator(
+                "gbfr.animation_batch_rebase_source",
+                text="全部 source 换基并导出 unpack",
+                icon="EXPORT",
+            )
             if annotation:
                 layout.label(
                     text=f"文件名推测：{annotation}", icon="QUESTION",
@@ -2063,6 +2279,7 @@ class GBFR_PT_AnimationPreview(Panel):
 classes = (
     GBFRAnimationEntryProperties, GBFRAnimationStateProperties,
     GBFR_OT_AnimationImportAction, GBFR_OT_AnimationRebaseSelectedBones,
+    GBFR_OT_AnimationBatchRebaseSource,
     GBFR_OT_AnimationActivateAction,
     GBFR_OT_AnimationValidateAction, GBFR_OT_AnimationExportAction,
     GBFR_OT_AnimationToggleExportPreview,

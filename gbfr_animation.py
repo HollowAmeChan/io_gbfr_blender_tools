@@ -303,6 +303,9 @@ def write_mot_template_atomic(
     template: AnimationClip,
     sampled_tracks,
     destination: str | Path,
+    *,
+    verify_samples: bool = True,
+    verify_indices=None,
 ) -> Path:
     """Write and reparse a template-based MOT before replacing its unpack target."""
     if not str(destination).strip():
@@ -334,18 +337,18 @@ def write_mot_template_atomic(
             or len(parsed.tracks) != len(template.tracks)
         ):
             raise ValueError("MOT 临时文件头部或轨道数量往返不一致")
-        for index, (source, output, expected) in enumerate(
-            zip(template.tracks, parsed.tracks, sampled_tracks)
-        ):
+        for index, (source, output) in enumerate(zip(template.tracks, parsed.tracks)):
             if (
                 output.bone_id != source.bone_id
                 or output.property != source.property
                 or output.unknown != source.unknown
             ):
                 raise ValueError(f"MOT 临时文件轨道 {index} 契约往返不一致")
-            actual = tuple(output.sample(frame) for frame in range(template.frame_count))
-            if actual != tuple(_float32(value) for value in expected):
-                raise ValueError(f"MOT 临时文件轨道 {index} 采样往返不一致")
+            if verify_samples or (verify_indices is not None and index in verify_indices):
+                expected = sampled_tracks[index]
+                actual = tuple(output.sample(frame) for frame in range(template.frame_count))
+                if actual != tuple(_float32(value) for value in expected):
+                    raise ValueError(f"MOT 临时文件轨道 {index} 采样往返不一致")
         os.replace(temporary, destination)
         temporary = None
         return destination
