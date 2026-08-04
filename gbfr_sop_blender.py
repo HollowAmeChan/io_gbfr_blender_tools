@@ -304,8 +304,12 @@ def _model_export_ready(context, state) -> bool:
     collection = active_session_collection(context)
     if collection is None:
         return False
-    resolved = Path(collection.gbfr_session.resolved_minfo_path)
-    expected = Path(state.edit_path).with_suffix(".minfo")
+    resolved_path = collection.gbfr_session.resolved_minfo_path.strip()
+    edit_path = state.edit_path.strip()
+    if not resolved_path or not edit_path:
+        return False
+    resolved = Path(resolved_path)
+    expected = Path(edit_path).with_suffix(".minfo")
     return resolved.is_file() and expected.is_file() and _same_path(resolved, expected)
 
 

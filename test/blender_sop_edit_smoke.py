@@ -15,7 +15,7 @@ from io_gbfr_blender_tools.gbfr_sop import (
     make_swing_twist_operation, save_sop,
 )
 from io_gbfr_blender_tools.gbfr_sop_blender import (
-    CONSTRAINT_PREFIX, populate_sop_state, stage_sop_for_workspace,
+    CONSTRAINT_PREFIX, _model_export_ready, populate_sop_state, stage_sop_for_workspace,
 )
 from io_gbfr_blender_tools.gbfr_workspace import resolve_model_bundle
 
@@ -79,6 +79,10 @@ with tempfile.TemporaryDirectory() as temporary:
     state = armature.gbfr_sop
     assert state.enabled and len(state.operations) == 1
     assert not (root / paths["unpack_sop"]).exists()
+    edit_path = state.edit_path
+    state.edit_path = ""
+    assert not _model_export_ready(bpy.context, state)
+    state.edit_path = edit_path
 
     item = state.operations[0]
     item.swing_rate = 0.6
