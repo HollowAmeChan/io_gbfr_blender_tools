@@ -96,6 +96,18 @@ def clp_numeric_name_reference_groups(armature) -> dict[str, tuple[int, ...]]:
                 bone = armature.data.bones.get(reference) if reference else None
                 if bone is None or re.fullmatch(r"_[0-9]{3}", bone.name) is None:
                     continue
+                # Numeric names are valid for source skeleton bones (for example
+                # `_310`), so only flag newly added bones that entered this zone.
+                # Imported bones carry the original index/name markers; appended
+                # bones may carry the auto-allocation policy instead.
+                if bone.get("gbfr_original_index") is not None:
+                    continue
+                if (
+                    bone.get("gbfr_auto_bone_policy") is None
+                    and bone.get("gbfr_original_name")
+                    and bone.get("gbfr_original_name") == bone.name
+                ):
+                    continue
                 groups_by_name.setdefault(bone.name, set()).add(int(group.group_id))
     return {
         name: tuple(sorted(group_ids))
