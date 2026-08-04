@@ -30,6 +30,7 @@ from .utils import bone_names_mapping
 CONSTRAINT_PREFIX = "GBFR SOP "
 STATUS_LABELS = {
     "approximate_constraint": "已创建 Blender 近似约束",
+    "approximate_unchecked": "已创建 Blender 近似约束（无静止姿态基线）",
     "rest_guard_failed": "静止姿态自检失败，未执行",
     "not_implemented": "公式未探明，只读导入",
     "missing_bone": "引用骨骼缺失，未执行",
@@ -96,6 +97,18 @@ def _rest_quaternions(armature):
         if bone_id is not None and int(bone_id) >= 0 and value is not None and len(value) == 4:
             result[int(bone_id)] = tuple(float(component) for component in value)
     return result
+
+
+def _blender_preview_status(operation, mapping, rest_quaternions):
+    status = guarded_preview_status(operation, rest_quaternions)
+    if (
+        status == "missing_bone"
+        and operation.target_bone in mapping
+        and operation.source_bone in mapping
+        and is_editable_swing_twist(operation)
+    ):
+        return "approximate_unchecked"
+    return status
 
 
 def _remove_imported_constraints(armature):
@@ -389,7 +402,7 @@ def rebuild_sop_preview(armature) -> None:
     for index, item in enumerate(state.operations):
         try:
             operation = _operation_from_item(item, armature, index)
-            status = guarded_preview_status(operation, rest)
+            status = _blender_preview_status(operation, mapping, rest)
         except (ValueError, TypeError, json.JSONDecodeError):
             item.preview_status = "invalid_core_fields"
             state.missing_count += 1
@@ -399,7 +412,7 @@ def rebuild_sop_preview(armature) -> None:
         item.target_name = _display_bone(operation.target_bone, mapping)
         item.source_name = _display_bone(operation.source_bone, mapping)
         item.preview_status = status
-        if status == "approximate_constraint":
+        if status in {"approximate_constraint", "approximate_unchecked"}:
             created = _create_approximate_constraints(armature, operation, mapping)
             state.imported_constraint_count += created
             if created:
@@ -455,7 +468,7 @@ def populate_sop_state(
     for operation in asset.operations:
         description = catalog.get(operation.type_hash, SopDescription())
         item = state.operations.add()
-        _populate_item(item, operation, description, guarded_preview_status(operation, rest), mapping)
+        _populate_item(item, operation, description, _blender_preview_status(operation, mapping, rest), mapping)
     state.active_operation_index = min(state.active_operation_index, max(0, len(state.operations) - 1))
     state.source_sha256 = _sha256(watch_path)
     state.enabled = True
@@ -557,9 +570,10 @@ class GBFR_OT_SopAdd(Operator):
         catalog = load_catalog(Path(__file__).parent / "data" / "sop_operations_zh.json")
         state.suspend_updates = True
         item = state.operations.add()
+        mapping = _bone_map(armature)
         _populate_item(
             item, operation, catalog.get(operation.type_hash, SopDescription()),
-            guarded_preview_status(operation, _rest_quaternions(armature)), _bone_map(armature),
+            _blender_preview_status(operation, mapping, _rest_quaternions(armature)), mapping,
         )
         state.active_operation_index = len(state.operations) - 1
         state.suspend_updates = False
@@ -716,6 +730,7 @@ class GBFR_UL_SopOperations(UIList):
     def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_propname, index):
         icons = {
             "approximate_constraint": "CONSTRAINT",
+            "approximate_unchecked": "CONSTRAINT",
             "rest_guard_failed": "ERROR",
             "not_implemented": "LOCKED",
             "missing_bone": "BONE_DATA",

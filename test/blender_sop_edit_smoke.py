@@ -66,11 +66,14 @@ with tempfile.TemporaryDirectory() as temporary:
     source_bone.head, source_bone.tail = (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)
     target_bone = armature.data.edit_bones.new("_a50")
     target_bone.head, target_bone.tail = (1.0, 0.0, 0.0), (1.0, 1.0, 0.0)
+    skirt_bone = armature.data.edit_bones.new("Skirt_B_01")
+    skirt_bone.head, skirt_bone.tail = (2.0, 0.0, 0.0), (2.0, 1.0, 0.0)
     bpy.ops.object.mode_set(mode="OBJECT")
     for name, bone_id in (("_00e", 0x00E), ("_a50", 0xA50)):
         bone = armature.data.bones[name]
         bone["gbfr_bone_id"] = bone_id
         bone["gbfr_rest_quaternion"] = (1.0, 0.0, 0.0, 0.0)
+    armature.data.bones["Skirt_B_01"]["gbfr_bone_id"] = 0xA51
 
     configure_session(
         collection, bundle, root / paths["source_minfo"],
@@ -111,11 +114,17 @@ with tempfile.TemporaryDirectory() as temporary:
     assert len(state.operations) == 1
     assert bpy.ops.gbfr.sop_add(
         constraint_type="SKIRT_COPY_ROTATION",
-        target_ref="_a50", source_ref="_00e", axis="1",
+        target_ref="Skirt_B_01", source_ref="_00e", axis="1",
         swing_rate=0.75, twist_rate=0.25,
     ) == {"FINISHED"}
     assert len(state.operations) == 2
     assert state.active_operation_index == 1
+    assert state.operations[1].preview_status == "approximate_unchecked"
+    skirt_constraints = [
+        constraint for constraint in armature.pose.bones["Skirt_B_01"].constraints
+        if constraint.name.startswith(CONSTRAINT_PREFIX)
+    ]
+    assert len(skirt_constraints) == 2
     assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
     assert len(state.operations) == 1
 
