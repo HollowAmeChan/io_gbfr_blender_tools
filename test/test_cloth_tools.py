@@ -41,6 +41,16 @@ class ClothToolTests(unittest.TestCase):
         self.assertEqual(100, by_id[200].side)
         self.assertEqual(200, by_id[300].side)
 
+    def test_rotation_limit_override_replaces_preset_gradient(self):
+        selected = chain("Skirt", 100, 4)
+        nodes, _chains = generate_nodes(
+            selected, "SKIRT", "GRID", False, rotation_limit_override=math.radians(27.0),
+        )
+        self.assertTrue(all(
+            math.isclose(node.rotation_limit, math.radians(27.0))
+            for node in nodes
+        ))
+
     def test_independent_chains_continue_through_longest_branch(self):
         selected = [
             SelectedBone("HairBack_01", 1),

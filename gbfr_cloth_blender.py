@@ -330,6 +330,14 @@ class GBFRClothStateProperties(PropertyGroup):
         ),
     )
     clp_tool_closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
+    clp_tool_rotation_override: BoolProperty(
+        name="覆盖摆角限制", default=False,
+        description="自动创建 CLP 时用同一个角度覆盖预设的深度梯度",
+    )
+    clp_tool_rotation_limit: FloatProperty(
+        name="覆盖摆角", subtype="ANGLE", default=math.radians(45.0),
+        min=0.0, max=math.pi, description="自动创建 CLP 时所有新节点使用的摆角",
+    )
     last_status: StringProperty(name="状态")
 
 
@@ -1049,6 +1057,32 @@ def write_cloth_xml_to_workspace(
     return count
 
 
+class GBFR_OT_ClothExportAllToUnpack(Operator):
+    bl_idname = "gbfr.cloth_export_all_to_unpack"
+    bl_label = "\u5bfc\u51fa\u5168\u90e8 Cloth \u5230 unpack"
+    bl_description = "\u5c06\u5f53\u524d\u6240\u6709 CLP/CLH \u5199\u56de\u5de5\u4f5c\u533a unpack \u4e2d\u95f4\u6587\u4ef6"
+
+    def execute(self, context):
+        armature = _armature(context)
+        state = armature.gbfr_cloth if armature else None
+        if not state or not state.enabled:
+            self.report({"ERROR"}, "\u8bf7\u5148\u8f7d\u5165 Cloth \u5de5\u4f5c\u533a")
+            return {"CANCELLED"}
+        try:
+            count = write_cloth_xml_to_workspace(
+                armature,
+                state.minfo_path,
+                state.workspace_path or None,
+            )
+            state.last_status = f"\u5df2\u5bfc\u51fa {count} \u4e2a Cloth XML \u5230 unpack"
+            self.report({"INFO"}, state.last_status)
+            return {"FINISHED"}
+        except Exception as error:
+            state.last_status = f"Cloth \u5bfc\u51fa\u5931\u8d25: {error}"
+            self.report({"ERROR"}, state.last_status)
+            return {"CANCELLED"}
+
+
 class GBFR_OT_ClothReload(Operator):
     bl_idname = "gbfr.cloth_reload"
     bl_label = "从工作区重新载入"
@@ -1118,6 +1152,14 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         ),
     )
     closed: BoolProperty(name="首尾闭合", default=False, description="将排序后的第一串和最后一串横向连接")
+    rotation_override: BoolProperty(
+        name="覆盖摆角限制", default=False,
+        description="用同一个角度覆盖当前预设的摆角梯度",
+    )
+    rotation_limit: FloatProperty(
+        name="覆盖摆角", subtype="ANGLE", default=math.radians(45.0),
+        min=0.0, max=math.pi, description="所有新生成节点使用的摆角",
+    )
     selected_bones_json: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
@@ -1134,6 +1176,8 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         self.preset_key = state.clp_tool_preset
         self.topology = state.clp_tool_topology
         self.closed = state.clp_tool_closed
+        self.rotation_override = state.clp_tool_rotation_override
+        self.rotation_limit = state.clp_tool_rotation_limit
         return context.window_manager.invoke_props_dialog(self, width=420)
 
     def draw(self, context):
@@ -1149,6 +1193,9 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
         layout.prop(self, "topology", expand=True)
         if self.topology == "GRID":
             layout.prop(self, "closed", toggle=True, icon='LOOP_FORWARDS')
+        layout.prop(self, "rotation_override", toggle=True, icon='CONSTRAINT_BONE')
+        if self.rotation_override:
+            layout.prop(self, "rotation_limit")
 
     def execute(self, context):
         armature = _armature(context)
@@ -1171,6 +1218,7 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
                 self.preset_key,
                 self.topology,
                 self.closed,
+                self.rotation_limit if self.rotation_override else None,
             )
             selected_ids = {bone.bone_id for bone in selected}
             for node in generated:
@@ -1183,6 +1231,8 @@ class GBFR_OT_ClpCreateFromSelection(Operator):
             state.clp_tool_preset = self.preset_key
             state.clp_tool_topology = self.topology
             state.clp_tool_closed = self.closed
+            state.clp_tool_rotation_override = self.rotation_override
+            state.clp_tool_rotation_limit = self.rotation_limit
             current = [] if self.replace_existing else [_node_value(value) for value in group.nodes]
             current_ids = {value.bone for value in current}
             duplicates = [value.bone for value in generated if value.bone in current_ids]
@@ -1633,6 +1683,11 @@ class GBFR_PT_ClothEditor(Panel):
         summary.label(text=f"{len(state.clp_groups)} CLP", icon="CONSTRAINT_BONE")
         summary.label(text=f"{len(state.clh_layers)} CLH", icon="MESH_UVSPHERE")
         actions = layout.row(align=True)
+        actions.operator(
+            "gbfr.cloth_export_all_to_unpack",
+            text="\u5bfc\u51fa\u5168\u90e8 Cloth",
+            icon="EXPORT",
+        )
         actions.operator("gbfr.repair_duplicate_bone_ids", text="修复重复骨骼 ID", icon="BONE_DATA")
         actions.operator("gbfr.cloth_reload", text="重载 unpack", icon="FILE_REFRESH")
         actions.operator("gbfr.cloth_restore_source", text="恢复 source", icon="LOOP_BACK")
@@ -2009,7 +2064,7 @@ classes = (
     GBFRClpNodeProperties, GBFRClpGroupProperties, GBFRClhCollisionProperties,
     GBFRClhLayerProperties, GBFRClothStateProperties, GBFR_OT_ClothReload,
     GBFR_OT_RepairDuplicateBoneIds,
-    GBFR_OT_ClothRestoreSource,
+    GBFR_OT_ClothRestoreSource, GBFR_OT_ClothExportAllToUnpack,
     GBFR_OT_ClpCreateFromSelection,
     GBFR_OT_ClpDeleteSelection, GBFR_OT_ClpRemoveActiveNode,
     GBFR_OT_ClpCleanInvalidReferences,

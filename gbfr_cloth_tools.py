@@ -275,7 +275,10 @@ def count_nonreciprocal_up_links(nodes: Iterable[ClpNode]) -> int:
     )
 
 
-def generate_nodes(selected: Iterable[SelectedBone], preset_key: str, topology: str | None = None, closed: bool = False) -> tuple[list[ClpNode], list[list[SelectedBone]]]:
+def generate_nodes(
+    selected: Iterable[SelectedBone], preset_key: str, topology: str | None = None,
+    closed: bool = False, rotation_limit_override: float | None = None,
+) -> tuple[list[ClpNode], list[list[SelectedBone]]]:
     chosen_preset = preset(preset_key)
     topology = topology or chosen_preset.topology
     if topology not in {"CHAINS", "GRID"}:
@@ -296,6 +299,8 @@ def generate_nodes(selected: Iterable[SelectedBone], preset_key: str, topology: 
                     "weight", "thickness", "wind_area",
                 )
             }
+            if rotation_limit_override is not None:
+                values["rotation_limit"] = float(rotation_limit_override)
             link = links[bone.bone_id]
             nodes.append(ClpNode(
                 data_version=2, bone=bone.bone_id,
