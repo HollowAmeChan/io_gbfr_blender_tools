@@ -70,12 +70,15 @@ with tempfile.TemporaryDirectory() as temporary:
     target_bone.head, target_bone.tail = (1.0, 0.0, 0.0), (1.0, 1.0, 0.0)
     skirt_bone = armature.data.edit_bones.new("Skirt_B_01")
     skirt_bone.head, skirt_bone.tail = (2.0, 0.0, 0.0), (2.0, 0.0, 1.0)
+    angled_skirt_bone = armature.data.edit_bones.new("Skirt_C_01")
+    angled_skirt_bone.head, angled_skirt_bone.tail = (3.0, 0.0, 0.0), (4.0, 1.0, 1.0)
     bpy.ops.object.mode_set(mode="OBJECT")
     for name, bone_id in (("_00e", 0x00E), ("_a50", 0xA50)):
         bone = armature.data.bones[name]
         bone["gbfr_bone_id"] = bone_id
         bone["gbfr_rest_quaternion"] = (1.0, 0.0, 0.0, 0.0)
     armature.data.bones["Skirt_B_01"]["gbfr_bone_id"] = 0xA51
+    armature.data.bones["Skirt_C_01"]["gbfr_bone_id"] = 0xA52
 
     configure_session(
         collection, bundle, root / paths["source_minfo"],
@@ -142,6 +145,33 @@ with tempfile.TemporaryDirectory() as temporary:
     target_rest = tuple(_export_rest_quaternion(armature, "Skirt_B_01"))
     evaluated_rest = evaluate_core_operation(authored, source_rest)
     assert quaternion_error(evaluated_rest, target_rest) < 1e-5
+    assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
+    assert len(state.operations) == 1
+
+    assert bpy.ops.gbfr.sop_add(
+        constraint_type="SKIRT_COPY_ROTATION",
+        target_ref="Skirt_C_01", source_ref="_00e", axis="1",
+        swing_rate=0.75, twist_rate=0.25,
+    ) == {"FINISHED"}
+    assert state.operations[1].preview_status == "approximate_unchecked"
+    angled_constraints = [
+        constraint for constraint in armature.pose.bones["Skirt_C_01"].constraints
+        if constraint.name.startswith(CONSTRAINT_PREFIX)
+    ]
+    assert len(angled_constraints) == 2
+    assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
+    assert len(state.operations) == 1
+
+    assert bpy.ops.gbfr.sop_add(
+        constraint_type="SKIRT_COPY_ROTATION",
+        target_ref="Skirt_C_01", source_ref="_00e", axis="1",
+        swing_rate=0.0, twist_rate=0.0,
+    ) == {"FINISHED"}
+    assert state.operations[1].preview_status == "zero_effect"
+    assert not [
+        constraint for constraint in armature.pose.bones["Skirt_C_01"].constraints
+        if constraint.name.startswith(CONSTRAINT_PREFIX)
+    ]
     assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
     assert len(state.operations) == 1
 

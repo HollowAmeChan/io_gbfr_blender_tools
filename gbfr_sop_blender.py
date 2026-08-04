@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from itertools import permutations
 import json
 from pathlib import Path
 
@@ -37,6 +38,7 @@ STATUS_LABELS = {
     "not_implemented": "公式未探明，只读导入",
     "missing_bone": "引用骨骼缺失，未执行",
     "invalid_core_fields": "核心字段不完整，未执行",
+    "zero_effect": "Swing/Twist 比例均为 0，无预览效果",
 }
 AXIS_ITEMS = (
     ("0", "X", "X 轴为 Twist 主轴"),
@@ -447,14 +449,22 @@ def _add_copy_rotation(
 
 def _mapped_owner_axes(operation: SopOperation, source_axes, rate):
     offset = _operation_offset_quaternion(operation)
+    mapped_vectors = tuple(
+        offset.inverted() @ Vector(tuple(float(index == source_axis) for index in range(3)))
+        for source_axis in range(3)
+    )
+    owner_axes = max(
+        permutations(range(3)),
+        key=lambda candidate: sum(
+            abs(mapped_vectors[source_axis][candidate[source_axis]])
+            for source_axis in range(3)
+        ),
+    )
     axes = [False, False, False]
     inversions = [False, False, False]
     for source_axis in source_axes:
-        vector = Vector(tuple(float(index == source_axis) for index in range(3)))
-        mapped = offset.inverted() @ vector
-        owner_axis = max(range(3), key=lambda index: abs(mapped[index]))
-        if abs(mapped[owner_axis]) < 0.95 or axes[owner_axis]:
-            return None
+        mapped = mapped_vectors[source_axis]
+        owner_axis = owner_axes[source_axis]
         axes[owner_axis] = True
         inversions[owner_axis] = mapped[owner_axis] * rate < 0.0
     return tuple(axes), tuple(inversions)
@@ -524,8 +534,7 @@ def rebuild_sop_preview(armature) -> None:
             if created:
                 state.preview_operation_count += 1
             else:
-                item.preview_status = "invalid_core_fields"
-                state.missing_count += 1
+                item.preview_status = "zero_effect"
         elif status == "rest_guard_failed":
             state.guarded_count += 1
         elif status == "not_implemented":
@@ -844,6 +853,7 @@ class GBFR_UL_SopOperations(UIList):
             "not_implemented": "LOCKED",
             "missing_bone": "BONE_DATA",
             "invalid_core_fields": "ERROR",
+            "zero_effect": "INFO",
         }
         icon = icons.get(item.preview_status, "QUESTION")
         if self.layout_type in {"DEFAULT", "COMPACT"}:
