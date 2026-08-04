@@ -40,6 +40,17 @@ AXIS_ITEMS = (
     ("1", "Y", "Y 轴为 Twist 主轴"),
     ("2", "Z", "Z 轴为 Twist 主轴"),
 )
+OPERATION_FILTER_ITEMS = (
+    ("ALL", "全部", "显示全部 SOP 操作"),
+    ("EDITABLE", "可编辑", "只显示已探明并可编辑的复制旋转操作"),
+    ("READ_ONLY", "只读", "只显示尚未完整探明的只读操作"),
+)
+NEW_OPERATION_TYPE_ITEMS = (
+    (
+        "SKIRT_COPY_ROTATION", "裙骨复制旋转",
+        "已探明的 Swing/Twist 复制旋转约束",
+    ),
+)
 
 
 def _sha256(path: Path) -> str:
@@ -168,18 +179,13 @@ class GBFRSopStateProperties(PropertyGroup):
     version: StringProperty(name="版本")
     operations: CollectionProperty(type=GBFRSopOperationProperties)
     active_operation_index: IntProperty(default=0)
+    operation_filter: EnumProperty(
+        name="列表筛选", items=OPERATION_FILTER_ITEMS, default="ALL",
+    )
+    operation_search: StringProperty(name="搜索约束")
     preview_constraints: BoolProperty(
         name="启用核心约束近似预览", default=True, update=_preview_update,
         description="只启用通过静止姿态自检的 Swing/Twist 近似；属性修改只作用于 Blender 内存",
-    )
-    new_target_ref: StringProperty(name="目标裙骨")
-    new_source_ref: StringProperty(name="来源腿骨")
-    new_axis: EnumProperty(name="旋转轴", items=AXIS_ITEMS, default="1")
-    new_swing_rate: FloatProperty(
-        name="Swing 比例", default=0.5, min=-2.0, max=2.0, soft_min=0.0, soft_max=1.0,
-    )
-    new_twist_rate: FloatProperty(
-        name="Twist 比例", default=0.0, min=-2.0, max=2.0, soft_min=0.0, soft_max=1.0,
     )
     imported_constraint_count: IntProperty(default=0)
     preview_operation_count: IntProperty(default=0)
@@ -452,11 +458,6 @@ def populate_sop_state(
         _populate_item(item, operation, description, guarded_preview_status(operation, rest), mapping)
     state.active_operation_index = min(state.active_operation_index, max(0, len(state.operations) - 1))
     state.source_sha256 = _sha256(watch_path)
-    state.new_target_ref = ""
-    state.new_source_ref = ""
-    state.new_axis = "1"
-    state.new_swing_rate = 0.5
-    state.new_twist_rate = 0.0
     state.enabled = True
     state.dirty = False
     state.suspend_updates = False
@@ -496,26 +497,63 @@ class GBFR_OT_SopReload(Operator):
 
 class GBFR_OT_SopAdd(Operator):
     bl_idname = "gbfr.sop_add"
-    bl_label = "添加复制旋转"
-    bl_description = "添加已确认的 Swing/Twist 复制旋转 SOP 操作"
+    bl_label = "新增 SOP 约束"
+    bl_description = "选择已探明的 SOP 类型并添加到当前约束列表"
     bl_options = {"UNDO"}
+
+    constraint_type: EnumProperty(
+        name="约束类型", items=NEW_OPERATION_TYPE_ITEMS,
+        default="SKIRT_COPY_ROTATION",
+    )
+    target_ref: StringProperty(name="目标裙骨")
+    source_ref: StringProperty(name="来源腿骨")
+    axis: EnumProperty(name="Twist 轴", items=AXIS_ITEMS, default="1")
+    swing_rate: FloatProperty(
+        name="Swing 比例", default=0.5, min=-2.0, max=2.0,
+        soft_min=0.0, soft_max=1.0,
+    )
+    twist_rate: FloatProperty(
+        name="Twist 比例", default=0.0, min=-2.0, max=2.0,
+        soft_min=0.0, soft_max=1.0,
+    )
+
+    def invoke(self, context, _event):
+        if _armature(context) is None:
+            return {"CANCELLED"}
+        return context.window_manager.invoke_props_dialog(self, width=440)
+
+    def draw(self, context):
+        armature = _armature(context)
+        layout = self.layout
+        layout.prop(self, "constraint_type")
+        if self.constraint_type == "SKIRT_COPY_ROTATION" and armature is not None:
+            form = layout.column(align=True)
+            form.prop_search(self, "target_ref", armature.data, "bones")
+            form.prop_search(self, "source_ref", armature.data, "bones")
+            axis = layout.row(align=True)
+            axis.label(text="Twist 轴")
+            axis.prop(self, "axis", expand=True)
+            layout.prop(self, "swing_rate", slider=True)
+            layout.prop(self, "twist_rate", slider=True)
 
     def execute(self, context):
         armature = _armature(context)
         if armature is None:
             return {"CANCELLED"}
-        state = armature.gbfr_sop
         try:
-            target = _bone_id(armature, state.new_target_ref)
-            source = _bone_id(armature, state.new_source_ref)
+            if self.constraint_type != "SKIRT_COPY_ROTATION":
+                raise ValueError("当前版本不支持该 SOP 约束类型")
+            target = _bone_id(armature, self.target_ref)
+            source = _bone_id(armature, self.source_ref)
             if target == source:
                 raise ValueError("SOP 目标骨和来源骨不能相同")
             operation = make_swing_twist_operation(
-                target, source, int(state.new_axis), state.new_swing_rate, state.new_twist_rate,
+                target, source, int(self.axis), self.swing_rate, self.twist_rate,
             )
         except ValueError as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
+        state = armature.gbfr_sop
         catalog = load_catalog(Path(__file__).parent / "data" / "sop_operations_zh.json")
         state.suspend_updates = True
         item = state.operations.add()
@@ -534,7 +572,7 @@ class GBFR_OT_SopAdd(Operator):
 class GBFR_OT_SopDelete(Operator):
     bl_idname = "gbfr.sop_delete"
     bl_label = "删除约束"
-    bl_description = "只允许删除已确认可编辑的 Swing/Twist 操作"
+    bl_description = "删除当前高亮的 SOP 条目；只修改 Blender 内存，需显式导出"
     bl_options = {"UNDO"}
 
     def execute(self, context):
@@ -543,8 +581,7 @@ class GBFR_OT_SopDelete(Operator):
             return {"CANCELLED"}
         state = armature.gbfr_sop
         index = state.active_operation_index
-        if index < 0 or index >= len(state.operations) or not state.operations[index].editable:
-            self.report({"ERROR"}, "当前操作只读，不能删除")
+        if index < 0 or index >= len(state.operations):
             return {"CANCELLED"}
         state.operations.remove(index)
         state.active_operation_index = min(index, max(0, len(state.operations) - 1))
@@ -658,16 +695,46 @@ class GBFR_OT_SopRestoreSource(Operator):
 
 
 class GBFR_UL_SopOperations(UIList):
+    def filter_items(self, _context, data, propname):
+        items = getattr(data, propname)
+        query = data.operation_search.strip().casefold()
+        mode = data.operation_filter
+        flags = []
+        for item in items:
+            searchable = " ".join((
+                item.operation_name, item.target_name, item.source_name,
+                item.type_hash, item.discovery_label,
+            )).casefold()
+            visible = not query or query in searchable
+            if mode == "EDITABLE":
+                visible = visible and item.editable
+            elif mode == "READ_ONLY":
+                visible = visible and not item.editable
+            flags.append(self.bitflag_filter_item if visible else 0)
+        return flags, []
+
     def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_propname, index):
-        icon = (
-            "CONSTRAINT" if item.preview_status == "approximate_constraint"
-            else "ERROR" if item.preview_status == "rest_guard_failed"
-            else "QUESTION"
-        )
-        row = layout.row(align=True)
-        row.label(text=f"#{index:03d}" if item.operation_index >= 0 else "新增", icon=icon)
-        row.label(text=item.operation_name)
-        row.label(text=item.target_name)
+        icons = {
+            "approximate_constraint": "CONSTRAINT",
+            "rest_guard_failed": "ERROR",
+            "not_implemented": "LOCKED",
+            "missing_bone": "BONE_DATA",
+            "invalid_core_fields": "ERROR",
+        }
+        icon = icons.get(item.preview_status, "QUESTION")
+        if self.layout_type in {"DEFAULT", "COMPACT"}:
+            split = layout.split(factor=0.66)
+            bones = split.row(align=True)
+            number = f"#{item.operation_index:03d}" if item.operation_index >= 0 else "新增"
+            bones.label(
+                text=f"{number}  {item.target_name} ← {item.source_name}", icon=icon,
+            )
+            kind = split.row(align=True)
+            kind.alignment = "RIGHT"
+            kind.label(text=item.operation_name)
+        else:
+            layout.alignment = "CENTER"
+            layout.label(text="", icon=icon)
 
 
 class GBFR_PT_SopInspector(Panel):
@@ -688,59 +755,85 @@ class GBFR_PT_SopInspector(Panel):
         state = armature.gbfr_sop
         layout = self.layout
 
-        reminder = layout.box()
-        reminder.label(text="SOP 使用 unpack 主体骨架基准", icon="INFO")
-        reminder.label(text="修改骨架后，请先“导出到工作区”再编辑或导出 SOP")
         if not _model_export_ready(context, state):
-            warning = reminder.row()
+            warning = layout.row()
             warning.alert = True
-            warning.label(text="当前主体尚未导出到 unpack", icon="ERROR")
+            warning.label(text="请先将当前主体导出到 unpack", icon="ERROR")
 
         toolbar = layout.row(align=True)
-        toolbar.operator("gbfr.sop_save", text="单独导出 SOP", icon="EXPORT")
-        toolbar.operator("gbfr.sop_reload", text="重载 unpack", icon="FILE_REFRESH")
-        toolbar.operator("gbfr.sop_restore_source", text="恢复 source", icon="LOOP_BACK")
-        toolbar.operator("gbfr.sop_preview_refresh", text="", icon="CONSTRAINT")
-        toolbar.prop(state, "preview_constraints", text="", toggle=True, icon="HIDE_OFF")
-        if state.dirty:
-            toolbar.label(text="未导出", icon="ERROR")
-
-        summary = layout.row(align=True)
-        summary.label(text=f"{state.preview_operation_count} 可用 · {state.unresolved_count} 未探明 · {state.guarded_count} 拦截")
-        if state.missing_count:
-            summary.label(text=str(state.missing_count), icon="ERROR")
-
-        layout.template_list(
-            "GBFR_UL_SopOperations", "", state, "operations",
-            state, "active_operation_index", rows=7,
+        toolbar.operator("gbfr.sop_save", text="导出 SOP", icon="EXPORT")
+        toolbar.operator("gbfr.sop_reload", text="", icon="FILE_REFRESH")
+        toolbar.operator("gbfr.sop_restore_source", text="", icon="LOOP_BACK")
+        toolbar.separator()
+        toolbar.prop(
+            state, "preview_constraints", text="预览", toggle=True,
+            icon="HIDE_OFF" if state.preview_constraints else "HIDE_ON",
         )
+        toolbar.operator("gbfr.sop_preview_refresh", text="", icon="CONSTRAINT")
 
-        if state.operations:
+        summary = layout.grid_flow(
+            row_major=True, columns=2, even_columns=True, even_rows=True, align=True,
+        )
+        summary.label(text=f"{len(state.operations)} 条", icon="LINENUMBERS_ON")
+        summary.label(text=f"{state.preview_operation_count} 可用", icon="CHECKMARK")
+        summary.label(text=f"{state.unresolved_count} 只读", icon="LOCKED")
+        summary.label(text=f"{state.guarded_count} 拦截", icon="ERROR")
+        if state.missing_count:
+            summary.label(text=f"{state.missing_count} 缺失", icon="BONE_DATA")
+        if state.dirty:
+            dirty = layout.row()
+            dirty.alert = True
+            dirty.label(text="Blender 内有尚未导出的 SOP 修改", icon="ERROR")
+
+        layout.prop(state, "operation_search", text="", icon="VIEWZOOM")
+        filters = layout.row(align=True)
+        filters.prop(state, "operation_filter", text="", expand=True)
+
+        header = layout.split(factor=0.66)
+        header.label(text="约束骨骼")
+        operation_header = header.row()
+        operation_header.alignment = "RIGHT"
+        operation_header.label(text="操作类型")
+
+        list_row = layout.row()
+        list_row.template_list(
+            "GBFR_UL_SopOperations", "", state, "operations",
+            state, "active_operation_index", rows=10,
+        )
+        list_actions = list_row.column(align=True)
+        list_actions.operator("gbfr.sop_add", text="", icon="ADD")
+        remove = list_actions.row(align=True)
+        remove.enabled = bool(state.operations)
+        remove.operator("gbfr.sop_delete", text="", icon="REMOVE")
+
+        if state.operations and 0 <= state.active_operation_index < len(state.operations):
             item = state.operations[state.active_operation_index]
             box = layout.box()
-            box.label(text=f"{item.target_name} ← {item.source_name}", icon="BONE_DATA")
-            box.label(text=STATUS_LABELS.get(item.preview_status, item.preview_status))
+            title = box.row(align=True)
+            number = f"#{item.operation_index:03d}" if item.operation_index >= 0 else "新增"
+            title.label(text=f"{number}  {item.operation_name}", icon="CONSTRAINT")
+            box.label(
+                text=STATUS_LABELS.get(item.preview_status, item.preview_status),
+                icon="INFO",
+            )
             if item.editable:
-                box.prop_search(item, "target_ref", armature.data, "bones", text="目标骨")
-                box.prop_search(item, "source_ref", armature.data, "bones", text="来源骨")
-                box.prop(item, "axis", expand=True)
+                bones = box.column(align=True)
+                bones.prop_search(item, "target_ref", armature.data, "bones", text="目标")
+                bones.prop_search(item, "source_ref", armature.data, "bones", text="来源")
+                axis = box.row(align=True)
+                axis.label(text="Twist 轴")
+                axis.prop(item, "axis", expand=True)
                 box.prop(item, "swing_rate", slider=True)
                 box.prop(item, "twist_rate", slider=True)
                 actions = box.row(align=True)
-                actions.operator("gbfr.sop_full_copy", text="完整复制 1:1")
-                actions.operator("gbfr.sop_delete", text="", icon="REMOVE")
+                actions.operator("gbfr.sop_full_copy", text="设为 1:1", icon="CON_ROTLIKE")
             else:
-                box.label(text=f"{item.operation_name} · {item.type_hash}")
-                box.label(text="未知或未完整探明字段保持只读")
-
-        add = layout.box()
-        add.label(text="新增复制旋转", icon="ADD")
-        add.prop_search(state, "new_target_ref", armature.data, "bones", text="目标裙骨")
-        add.prop_search(state, "new_source_ref", armature.data, "bones", text="来源腿骨")
-        add.prop(state, "new_axis", expand=True)
-        add.prop(state, "new_swing_rate", slider=True)
-        add.prop(state, "new_twist_rate", slider=True)
-        add.operator("gbfr.sop_add", text="添加约束", icon="ADD")
+                bones = box.row(align=True)
+                bones.label(text=f"目标  {item.target_name}", icon="BONE_DATA")
+                bones.label(text=f"来源  {item.source_name}", icon="BONE_DATA")
+                details = box.row(align=True)
+                details.label(text=item.discovery_label or "未探明")
+                details.label(text=item.type_hash)
 
         if state.last_status:
             layout.label(text=state.last_status, icon="INFO")

@@ -15,7 +15,8 @@ from io_gbfr_blender_tools.gbfr_sop import (
     make_swing_twist_operation, save_sop,
 )
 from io_gbfr_blender_tools.gbfr_sop_blender import (
-    CONSTRAINT_PREFIX, _model_export_ready, populate_sop_state, stage_sop_for_workspace,
+    CONSTRAINT_PREFIX, GBFR_UL_SopOperations, _model_export_ready,
+    populate_sop_state, stage_sop_for_workspace,
 )
 from io_gbfr_blender_tools.gbfr_workspace import resolve_model_bundle
 
@@ -87,6 +88,36 @@ with tempfile.TemporaryDirectory() as temporary:
     assert Path(state.minfo_path) == root / paths["source_minfo"]
     assert Path(state.edit_path) == root / paths["unpack_sop"]
     assert Path(state.source_baseline_path) == source_sop
+    filter_proxy = type("FilterProxy", (), {"bitflag_filter_item": 1})()
+    state.operation_search = "_a50"
+    assert GBFR_UL_SopOperations.filter_items(
+        filter_proxy, bpy.context, state, "operations",
+    )[0] == [1]
+    state.operation_search = "missing"
+    assert GBFR_UL_SopOperations.filter_items(
+        filter_proxy, bpy.context, state, "operations",
+    )[0] == [0]
+    state.operation_search = ""
+    state.operation_filter = "READ_ONLY"
+    assert GBFR_UL_SopOperations.filter_items(
+        filter_proxy, bpy.context, state, "operations",
+    )[0] == [0]
+    state.operation_filter = "ALL"
+
+    state.operations[0].editable = False
+    assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
+    assert len(state.operations) == 0, "只读 SOP 条目也应允许从列表删除"
+    assert bpy.ops.gbfr.sop_reload() == {"FINISHED"}
+    assert len(state.operations) == 1
+    assert bpy.ops.gbfr.sop_add(
+        constraint_type="SKIRT_COPY_ROTATION",
+        target_ref="_a50", source_ref="_00e", axis="1",
+        swing_rate=0.75, twist_rate=0.25,
+    ) == {"FINISHED"}
+    assert len(state.operations) == 2
+    assert state.active_operation_index == 1
+    assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
+    assert len(state.operations) == 1
 
     item = state.operations[0]
     item.swing_rate = 0.6
