@@ -25,7 +25,7 @@ from .gbfr_sop import (
     load_catalog, load_sop, make_swing_twist_operation, save_sop,
     update_swing_twist_operation,
 )
-from .gbfr_workspace import ModelBundle
+from .gbfr_workspace import ModelBundle, is_model_export_ready
 from .gbfr_session import (
     active_session_armature, active_session_collection, resolve_session_bundle,
 )
@@ -228,14 +228,20 @@ def _blender_preview_status(operation, mapping, rest_quaternions):
 
 
 def _remove_imported_constraints(armature):
-    for pose_bone in armature.pose.bones:
+    pose = getattr(armature, "pose", None)
+    if pose is None:
+        return
+    for pose_bone in pose.bones:
         for constraint in tuple(pose_bone.constraints):
             if constraint.name.startswith(CONSTRAINT_PREFIX):
                 pose_bone.constraints.remove(constraint)
 
 
 def _set_constraints_enabled(armature, enabled):
-    for pose_bone in armature.pose.bones:
+    pose = getattr(armature, "pose", None)
+    if pose is None:
+        return
+    for pose_bone in pose.bones:
         for constraint in pose_bone.constraints:
             if constraint.name.startswith(CONSTRAINT_PREFIX):
                 constraint.mute = not enabled
@@ -252,7 +258,10 @@ def _remove_imported_drivers(armature) -> None:
         for curve in tuple(animation_data.drivers):
             if _is_sop_driver(curve):
                 animation_data.drivers.remove(curve)
-    for pose_bone in armature.pose.bones:
+    pose = getattr(armature, "pose", None)
+    if pose is None:
+        return
+    for pose_bone in pose.bones:
         if DRIVER_DATA_PROPERTY in pose_bone:
             del pose_bone[DRIVER_DATA_PROPERTY]
 
@@ -478,13 +487,10 @@ def _model_export_ready(context, state) -> bool:
     collection = active_session_collection(context)
     if collection is None:
         return False
-    resolved_path = collection.gbfr_session.resolved_minfo_path.strip()
-    edit_path = state.edit_path.strip()
-    if not resolved_path or not edit_path:
-        return False
-    resolved = Path(resolved_path)
-    expected = Path(edit_path).with_suffix(".minfo")
-    return resolved.is_file() and expected.is_file() and _same_path(resolved, expected)
+    return is_model_export_ready(
+        collection.gbfr_session.resolved_minfo_path,
+        state.edit_path,
+    )
 
 
 def _active_sop_bundle(context) -> ModelBundle:

@@ -12,6 +12,20 @@ class WorkspaceError(RuntimeError):
     pass
 
 
+def is_model_export_ready(resolved_minfo_path: str | Path, edit_minfo_path: str | Path) -> bool:
+    """Check the shared unpack-baseline invariant used by editor modules."""
+    resolved_value = str(resolved_minfo_path or "").strip()
+    edit_value = str(edit_minfo_path or "").strip()
+    if not resolved_value or not edit_value:
+        return False
+    resolved = Path(resolved_value).expanduser()
+    expected = Path(edit_value).expanduser().with_suffix(".minfo")
+    try:
+        return resolved.is_file() and expected.is_file() and resolved.resolve() == expected.resolve()
+    except OSError:
+        return False
+
+
 @dataclass(frozen=True)
 class ClothFileRecord:
     category: str
