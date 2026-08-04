@@ -44,6 +44,7 @@ STATUS_LABELS = {
     "not_implemented": "公式未探明，只读导入",
     "missing_bone": "引用骨骼缺失，未执行",
     "invalid_core_fields": "核心字段不完整，未执行",
+    "drivers_removed": "Blender 预览驱动器已删除",
     "multiple_target_operations": "同一目标骨存在多重 SOP；仅不支持 Blender 预览，导出不受影响",
     "zero_effect": "Swing/Twist 比例均为 0，无预览效果",
 }
@@ -252,18 +253,21 @@ def _is_sop_driver(curve) -> bool:
     return driver is not None and driver.expression.startswith(DRIVER_EXPRESSION_PREFIX)
 
 
-def _remove_imported_drivers(armature) -> None:
+def _remove_imported_drivers(armature) -> int:
+    removed = 0
     animation_data = armature.animation_data
     if animation_data is not None:
         for curve in tuple(animation_data.drivers):
             if _is_sop_driver(curve):
                 animation_data.drivers.remove(curve)
+                removed += 1
     pose = getattr(armature, "pose", None)
     if pose is None:
-        return
+        return removed
     for pose_bone in pose.bones:
         if DRIVER_DATA_PROPERTY in pose_bone:
             del pose_bone[DRIVER_DATA_PROPERTY]
+    return removed
 
 
 def _set_drivers_enabled(armature, enabled) -> None:
@@ -297,6 +301,15 @@ def _operation_edit_update(item, _context):
     armature, state = _operation_owner(item)
     if state is None or state.suspend_updates:
         return
+    for ref_name, bone_id_name in (
+        ("target_ref", "target_bone"), ("source_ref", "source_bone"),
+    ):
+        try:
+            setattr(item, bone_id_name, _bone_id(armature, getattr(item, ref_name)))
+        except ValueError:
+            # Keep the last stable ID so a later preview refresh can recover a
+            # reference invalidated by a bone rename.
+            pass
     item.target_name = item.target_ref or item.target_name
     item.source_name = item.source_ref or item.source_name
     state.dirty = True
@@ -678,10 +691,37 @@ def _create_approximate_constraints(armature, operation, mapping):
     return count
 
 
-def rebuild_sop_preview(armature) -> None:
+def _rebind_operation_bones(state, armature, mapping) -> int:
+    repaired = 0
+    previous_suspend = state.suspend_updates
+    state.suspend_updates = True
+    try:
+        for item in state.operations:
+            if not item.editable:
+                continue
+            for ref_name, bone_id in (
+                ("target_ref", item.target_bone),
+                ("source_ref", item.source_bone),
+            ):
+                current_name = getattr(item, ref_name)
+                current_bone = armature.data.bones.get(current_name)
+                current_id = current_bone.get("gbfr_bone_id") if current_bone is not None else None
+                if current_id is not None and int(current_id) == bone_id:
+                    continue
+                recovered_name = mapping.get(bone_id)
+                if recovered_name and recovered_name != current_name:
+                    setattr(item, ref_name, recovered_name)
+                    repaired += 1
+    finally:
+        state.suspend_updates = previous_suspend
+    return repaired
+
+
+def rebuild_sop_preview(armature) -> int:
     state = armature.gbfr_sop
     mapping = _bone_map(armature)
     rest = _rest_quaternions(armature)
+    repaired_refs = _rebind_operation_bones(state, armature, mapping)
     _remove_imported_constraints(armature)
     _remove_imported_drivers(armature)
     state.imported_constraint_count = 0
@@ -741,6 +781,7 @@ def rebuild_sop_preview(armature) -> None:
             state.missing_count += 1
     _set_constraints_enabled(armature, state.preview_constraints)
     _set_drivers_enabled(armature, state.preview_constraints)
+    return repaired_refs
 
 
 def populate_sop_state(
@@ -951,10 +992,36 @@ class GBFR_OT_SopPreviewRefresh(Operator):
         armature = _armature(context)
         if armature is None:
             return {"CANCELLED"}
-        rebuild_sop_preview(armature)
+        repaired_refs = rebuild_sop_preview(armature)
         armature.gbfr_sop.last_status = (
             f"已更新预览：{armature.gbfr_sop.preview_operation_count} 条操作可执行"
+            + (f"；已重新绑定 {repaired_refs} 个改名骨骼引用" if repaired_refs else "")
         )
+        return {"FINISHED"}
+
+
+class GBFR_OT_SopDeleteDrivers(Operator):
+    bl_idname = "gbfr.sop_delete_drivers"
+    bl_label = "删除驱动器"
+    bl_description = "删除本插件生成的 SOP 预览驱动器；不删除 SOP 条目或用户驱动器"
+    bl_options = {"UNDO"}
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_sop
+        removed_operations = 0
+        for item in state.operations:
+            if item.preview_status == "exact_driver":
+                item.preview_status = "drivers_removed"
+                removed_operations += 1
+        removed_drivers = _remove_imported_drivers(armature)
+        state.preview_operation_count = max(
+            0, state.preview_operation_count - removed_operations,
+        )
+        state.last_status = f"已删除 {removed_drivers} 条 SOP 预览驱动器"
+        self.report({"INFO"}, state.last_status)
         return {"FINISHED"}
 
 
@@ -1054,6 +1121,7 @@ class GBFR_UL_SopOperations(UIList):
             "not_implemented": "LOCKED",
             "missing_bone": "BONE_DATA",
             "invalid_core_fields": "ERROR",
+            "drivers_removed": "DRIVER",
             "multiple_target_operations": "ERROR",
             "zero_effect": "INFO",
         }
@@ -1100,12 +1168,13 @@ class GBFR_PT_SopInspector(Panel):
         toolbar.operator("gbfr.sop_save", text="导出 SOP", icon="EXPORT")
         toolbar.operator("gbfr.sop_reload", text="", icon="FILE_REFRESH")
         toolbar.operator("gbfr.sop_restore_source", text="", icon="LOOP_BACK")
-        toolbar.separator()
-        toolbar.prop(
+        preview_tools = layout.row(align=True)
+        preview_tools.prop(
             state, "preview_constraints", text="预览", toggle=True,
             icon="HIDE_OFF" if state.preview_constraints else "HIDE_ON",
         )
-        toolbar.operator("gbfr.sop_preview_refresh", text="", icon="CONSTRAINT")
+        preview_tools.operator("gbfr.sop_preview_refresh", text="更新预览", icon="CONSTRAINT")
+        preview_tools.operator("gbfr.sop_delete_drivers", text="删除驱动器", icon="TRASH")
 
         summary = layout.grid_flow(
             row_major=True, columns=2, even_columns=True, even_rows=True, align=True,
@@ -1180,7 +1249,8 @@ class GBFR_PT_SopInspector(Panel):
 classes = (
     GBFRSopOperationProperties, GBFRSopStateProperties,
     GBFR_OT_SopReload, GBFR_OT_SopAdd, GBFR_OT_SopDelete,
-    GBFR_OT_SopFullCopy, GBFR_OT_SopPreviewRefresh, GBFR_OT_SopSave,
+    GBFR_OT_SopFullCopy, GBFR_OT_SopPreviewRefresh, GBFR_OT_SopDeleteDrivers,
+    GBFR_OT_SopSave,
     GBFR_OT_SopRestoreSource,
     GBFR_UL_SopOperations, GBFR_PT_SopInspector,
 )

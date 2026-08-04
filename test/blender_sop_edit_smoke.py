@@ -114,6 +114,23 @@ with tempfile.TemporaryDirectory() as temporary:
     )[0] == [0]
     state.operation_filter = "ALL"
 
+    item = state.operations[0]
+    armature.data.bones["_a50"].name = "Renamed SOP Target"
+    armature.data.bones["_00e"].name = "Renamed SOP Source"
+    assert item.target_ref == "_a50" and item.source_ref == "_00e"
+    assert bpy.ops.gbfr.sop_preview_refresh() == {"FINISHED"}
+    assert item.target_ref == "Renamed SOP Target"
+    assert item.source_ref == "Renamed SOP Source"
+    assert item.preview_status == "exact_driver"
+    assert "已重新绑定 2 个改名骨骼引用" in state.last_status
+    armature.data.bones["Renamed SOP Target"].name = "_a50"
+    armature.data.bones["Renamed SOP Source"].name = "_00e"
+    assert bpy.ops.gbfr.sop_preview_refresh() == {"FINISHED"}
+    assert item.target_ref == "_a50" and item.source_ref == "_00e"
+    assert item.preview_status == "exact_driver"
+    assert "已重新绑定 2 个改名骨骼引用" in state.last_status
+    assert not state.dirty
+
     def sop_drivers(bone_name):
         data_path = armature.pose.bones[bone_name].path_from_id("rotation_quaternion")
         animation_data = armature.animation_data
@@ -139,6 +156,17 @@ with tempfile.TemporaryDirectory() as temporary:
         assert quaternion_error(actual_basis, tuple(expected_basis)) < 1e-5
         source_pose.rotation_quaternion = Quaternion((1.0, 0.0, 0.0, 0.0))
         bpy.context.view_layer.update()
+
+    operation_count = len(state.operations)
+    assert len(sop_drivers("_a50")) == 4
+    assert bpy.ops.gbfr.sop_delete_drivers() == {"FINISHED"}
+    assert len(state.operations) == operation_count
+    assert not sop_drivers("_a50")
+    assert state.operations[0].preview_status == "drivers_removed"
+    assert not state.dirty
+    assert bpy.ops.gbfr.sop_preview_refresh() == {"FINISHED"}
+    assert len(sop_drivers("_a50")) == 4
+    assert state.operations[0].preview_status == "exact_driver"
 
     state.operations[0].editable = False
     assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
