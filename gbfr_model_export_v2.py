@@ -104,6 +104,17 @@ def export_bone_name(bone):
 	return export_name
 
 
+def _is_source_bone(bone):
+	"""Return whether this Blender bone represents an imported source slot."""
+	if bone.get("gbfr_original_index") is not None:
+		return True
+	return (
+		bone.get("gbfr_auto_bone_policy") is None
+		and bone.get("gbfr_original_name") == bone.name
+		and bone.name.startswith("_")
+	)
+
+
 def ordered_export_bones(
 	armature_obj, reference_skeleton=None, preserve_missing_reference_bones=False,
 ):
@@ -286,7 +297,12 @@ def appended_bone_export_name_map(
 			continue
 		previous = export_owners.get(export_name)
 		if previous is not None and previous != bone.name:
-			duplicate_bones.add(bone.name)
+			previous_bone = armature_obj.data.bones.get(previous)
+			if _is_source_bone(bone) and not _is_source_bone(previous_bone):
+				duplicate_bones.add(previous)
+				export_owners[export_name] = bone.name
+			else:
+				duplicate_bones.add(bone.name)
 			continue
 		export_owners[export_name] = bone.name
 	extra_bones = [

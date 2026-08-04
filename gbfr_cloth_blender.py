@@ -578,6 +578,11 @@ def _export_bone_ids(armature, state, reserved_names=None, persist_appended=Fals
             bone = armature.data.bones.get(bone_name)
             if bone is not None:
                 bone["gbfr_bone_id"] = int(final_name[1:], 16)
+                # export_bone_name() prefers these persisted aliases over the
+                # numeric property. Keep them in sync or a later export will
+                # resurrect the old duplicate name (for example `_c60`).
+                bone["gbfr_original_name"] = final_name
+                bone["original_name"] = final_name
                 bone["gbfr_auto_bone_policy"] = APPENDED_BONE_POLICY_VERSION
     result: dict[str, int] = {}
     used: dict[int, str] = {}
