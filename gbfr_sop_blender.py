@@ -1,21 +1,27 @@
-"""Read-only SOP import and guarded Blender constraint approximation."""
+"""Editable SOP import, guarded Blender preview, and unpack persistence."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 import bpy
-from bpy.props import BoolProperty, CollectionProperty, IntProperty, PointerProperty, StringProperty
+from bpy.props import (
+    BoolProperty, CollectionProperty, EnumProperty, FloatProperty,
+    IntProperty, PointerProperty, StringProperty,
+)
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 
 from .gbfr_sop import (
-    SWING_RATE_PROPERTY, SWING_TWIST_OPERATION, TWIST_RATE_PROPERTY,
-    TWIST_OPERATION, SopDescription, dominant_axis, guarded_preview_status,
-    load_catalog, load_sop,
+    SOP_VERSION, SWING_RATE_PROPERTY, SWING_TWIST_OPERATION,
+    TWIST_RATE_PROPERTY, SopAsset, SopDescription, SopOperation, SopProperty,
+    dominant_axis, guarded_preview_status, is_editable_swing_twist,
+    load_catalog, load_sop, make_swing_twist_operation, save_sop,
+    update_swing_twist_operation,
 )
 from .gbfr_workspace import ModelBundle, resolve_model_bundle
-from .gbfr_session import active_session_armature
+from .gbfr_session import active_session_armature, active_session_collection
 from .utils import bone_names_mapping
 
 
@@ -27,6 +33,19 @@ STATUS_LABELS = {
     "missing_bone": "引用骨骼缺失，未执行",
     "invalid_core_fields": "核心字段不完整，未执行",
 }
+AXIS_ITEMS = (
+    ("0", "X", "X 轴为 Twist 主轴"),
+    ("1", "Y", "Y 轴为 Twist 主轴"),
+    ("2", "Z", "Z 轴为 Twist 主轴"),
+)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _bone_map(armature):
@@ -35,6 +54,34 @@ def _bone_map(armature):
         value = bone.get("gbfr_bone_id")
         if value is not None and int(value) >= 0:
             result[int(value)] = bone.name
+    return result
+
+
+def _bone_id(armature, bone_name: str) -> int:
+    bone = armature.data.bones.get(bone_name)
+    if bone is None or bone.get("gbfr_bone_id") is None:
+        raise ValueError(f"骨骼没有有效 GBFR ID: {bone_name or '未选择'}")
+    value = int(bone["gbfr_bone_id"])
+    if value < 0:
+        raise ValueError(f"骨骼没有有效 GBFR ID: {bone_name}")
+    return value
+
+
+def _display_bone(bone_id, mapping):
+    code = f"_{bone_id:03x}"
+    friendly = bone_names_mapping.get(code)
+    if friendly:
+        return f"{friendly[0]} ({code})"
+    return mapping.get(bone_id, code)
+
+
+def _rest_quaternions(armature):
+    result = {}
+    for bone in armature.data.bones:
+        bone_id = bone.get("gbfr_bone_id")
+        value = bone.get("gbfr_rest_quaternion")
+        if bone_id is not None and int(bone_id) >= 0 and value is not None and len(value) == 4:
+            result[int(bone_id)] = tuple(float(component) for component in value)
     return result
 
 
@@ -59,12 +106,44 @@ def _preview_update(state, _context):
             break
 
 
+def _operation_owner(item):
+    for obj in bpy.data.objects:
+        if obj.type != "ARMATURE" or not hasattr(obj, "gbfr_sop"):
+            continue
+        state = obj.gbfr_sop
+        if any(value.as_pointer() == item.as_pointer() for value in state.operations):
+            return obj, state
+    return None, None
+
+
+def _operation_edit_update(item, _context):
+    armature, state = _operation_owner(item)
+    if state is None or state.suspend_updates:
+        return
+    item.target_name = item.target_ref or item.target_name
+    item.source_name = item.source_ref or item.source_name
+    state.dirty = True
+    rebuild_sop_preview(armature)
+
+
 class GBFRSopOperationProperties(PropertyGroup):
-    operation_index: IntProperty(name="文件序号", default=-1)
+    operation_index: IntProperty(name="原文件序号", default=-1)
+    editable: BoolProperty(default=False)
     target_bone: IntProperty(name="Target", default=-1)
     source_bone: IntProperty(name="Source", default=-1)
     target_name: StringProperty(name="Target")
     source_name: StringProperty(name="Source")
+    target_ref: StringProperty(name="目标骨", update=_operation_edit_update)
+    source_ref: StringProperty(name="来源骨", update=_operation_edit_update)
+    axis: EnumProperty(name="旋转轴", items=AXIS_ITEMS, default="1", update=_operation_edit_update)
+    swing_rate: FloatProperty(
+        name="Swing 比例", default=0.5, min=-2.0, max=2.0, soft_min=0.0, soft_max=1.0,
+        update=_operation_edit_update,
+    )
+    twist_rate: FloatProperty(
+        name="Twist 比例", default=0.0, min=-2.0, max=2.0, soft_min=0.0, soft_max=1.0,
+        update=_operation_edit_update,
+    )
     type_hash: StringProperty(name="类型哈希")
     operation_name: StringProperty(name="操作")
     category: StringProperty(name="类别")
@@ -79,39 +158,155 @@ class GBFRSopOperationProperties(PropertyGroup):
 
 class GBFRSopStateProperties(PropertyGroup):
     enabled: BoolProperty(default=False)
-    source_path: StringProperty(name="SOP 文件", subtype="FILE_PATH")
+    source_path: StringProperty(name="当前 SOP", subtype="FILE_PATH")
+    source_baseline_path: StringProperty(name="source SOP", subtype="FILE_PATH")
+    edit_path: StringProperty(name="unpack SOP", subtype="FILE_PATH")
+    source_sha256: StringProperty()
     minfo_path: StringProperty(name="minfo", subtype="FILE_PATH")
     version: StringProperty(name="版本")
     operations: CollectionProperty(type=GBFRSopOperationProperties)
     active_operation_index: IntProperty(default=0)
     preview_constraints: BoolProperty(
         name="启用核心约束近似预览", default=True, update=_preview_update,
-        description="只启用通过静止姿态自检的 Swing/Twist 与 Twist Copy Rotation 近似；不会修改 SOP 文件",
+        description="只启用通过静止姿态自检的 Swing/Twist 近似；属性修改只作用于 Blender 内存",
+    )
+    new_target_ref: StringProperty(name="目标裙骨")
+    new_source_ref: StringProperty(name="来源腿骨")
+    new_axis: EnumProperty(name="旋转轴", items=AXIS_ITEMS, default="1")
+    new_swing_rate: FloatProperty(
+        name="Swing 比例", default=0.5, min=-2.0, max=2.0, soft_min=0.0, soft_max=1.0,
+    )
+    new_twist_rate: FloatProperty(
+        name="Twist 比例", default=0.0, min=-2.0, max=2.0, soft_min=0.0, soft_max=1.0,
     )
     imported_constraint_count: IntProperty(default=0)
     preview_operation_count: IntProperty(default=0)
     guarded_count: IntProperty(default=0)
     unresolved_count: IntProperty(default=0)
     missing_count: IntProperty(default=0)
+    dirty: BoolProperty(default=False)
+    suspend_updates: BoolProperty(default=False)
     last_status: StringProperty()
 
 
-def _rest_quaternions(armature):
-    result = {}
-    for bone in armature.data.bones:
-        bone_id = bone.get("gbfr_bone_id")
-        value = bone.get("gbfr_rest_quaternion")
-        if bone_id is not None and int(bone_id) >= 0 and value is not None and len(value) == 4:
-            result[int(bone_id)] = tuple(float(component) for component in value)
-    return result
+def _property_json(operation: SopOperation) -> str:
+    return json.dumps([
+        {
+            "hash": f"0x{value.hash:08X}",
+            "type": "float" if value.value_type == 1 else "integer",
+            "value": value.value,
+            "raw": f"0x{value.raw_value:08X}",
+        }
+        for value in operation.properties
+    ], ensure_ascii=False)
 
 
-def _display_bone(bone_id, mapping):
-    code = f"_{bone_id:03x}"
-    friendly = bone_names_mapping.get(code)
-    if friendly:
-        return f"{friendly[0]} ({code})"
-    return mapping.get(bone_id, code)
+def _properties_from_json(value: str) -> tuple[SopProperty, ...]:
+    result = []
+    for item in json.loads(value):
+        value_type = 1 if item.get("type") == "float" else 0
+        result.append(SopProperty(int(item["hash"], 0), value_type, int(item["raw"], 0)))
+    return tuple(result)
+
+
+def _populate_item(item, operation, description, status, mapping):
+    item.name = f"#{operation.index:03d} {description.name}" if operation.index >= 0 else f"新增 {description.name}"
+    item.operation_index = operation.index
+    item.editable = is_editable_swing_twist(operation)
+    item.target_bone = operation.target_bone
+    item.source_bone = operation.source_bone
+    item.target_name = _display_bone(operation.target_bone, mapping)
+    item.source_name = _display_bone(operation.source_bone, mapping)
+    item.target_ref = mapping.get(operation.target_bone, "")
+    item.source_ref = mapping.get(operation.source_bone, "")
+    item.type_hash = f"0x{operation.type_hash:08X}"
+    item.operation_name = description.name
+    item.category = description.category
+    item.discovery = description.discovery
+    item.discovery_label = description.discovery_label
+    item.runtime_label = description.runtime_label
+    item.preview_status = status
+    item.purpose = description.purpose
+    item.metadata = f"0x{operation.metadata:08X}"
+    item.properties_json = _property_json(operation)
+    if item.editable:
+        item.axis = str(dominant_axis(operation) if dominant_axis(operation) is not None else 1)
+        item.swing_rate = operation.floating(SWING_RATE_PROPERTY, 0.0) or 0.0
+        item.twist_rate = operation.floating(TWIST_RATE_PROPERTY, 0.0) or 0.0
+
+
+def _operation_from_item(item, armature, index: int) -> SopOperation:
+    operation = SopOperation(
+        index=index,
+        type_hash=int(item.type_hash, 0),
+        metadata=int(item.metadata, 0),
+        target_bone=item.target_bone,
+        source_bone=item.source_bone,
+        properties=_properties_from_json(item.properties_json),
+    )
+    if not item.editable:
+        return operation
+    target = _bone_id(armature, item.target_ref)
+    source = _bone_id(armature, item.source_ref)
+    if target == source:
+        raise ValueError("SOP 目标骨和来源骨不能相同")
+    return update_swing_twist_operation(
+        operation,
+        target_bone=target,
+        source_bone=source,
+        axis=int(item.axis),
+        swing_rate=item.swing_rate,
+        twist_rate=item.twist_rate,
+    )
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve().samefile(right.resolve())
+    except (FileNotFoundError, OSError):
+        return str(left.resolve()).casefold() == str(right.resolve()).casefold()
+
+
+def _asset_from_state(armature) -> SopAsset:
+    state = armature.gbfr_sop
+    operations = tuple(
+        _operation_from_item(item, armature, index)
+        for index, item in enumerate(state.operations)
+    )
+    return SopAsset(Path(state.edit_path), SOP_VERSION, operations)
+
+
+def _validate_loaded_sop_unchanged(state) -> None:
+    source = Path(state.source_path)
+    if source.is_file() and _sha256(source) != state.source_sha256:
+        raise ValueError("SOP 文件已被外部修改，请先重新导入")
+
+
+def stage_sop_for_workspace(armature, staging_path: str | Path) -> Path:
+    state = getattr(armature, "gbfr_sop", None)
+    if state is None or not state.enabled:
+        raise ValueError("当前骨架没有可导出的 SOP")
+    _validate_loaded_sop_unchanged(state)
+    return save_sop(staging_path, _asset_from_state(armature))
+
+
+def export_sop_to_unpack(armature) -> Path:
+    state = armature.gbfr_sop
+    _validate_loaded_sop_unchanged(state)
+    source = Path(state.source_path)
+    target = Path(state.edit_path)
+    if target.is_file() and not _same_path(target, source):
+        raise ValueError("unpack SOP 在导入后出现，请重新导入以避免覆盖")
+    return save_sop(target, _asset_from_state(armature))
+
+
+def _model_export_ready(context, state) -> bool:
+    collection = active_session_collection(context)
+    if collection is None:
+        return False
+    resolved = Path(collection.gbfr_session.resolved_minfo_path)
+    expected = Path(state.edit_path).with_suffix(".minfo")
+    return resolved.is_file() and expected.is_file() and _same_path(resolved, expected)
 
 
 def _add_copy_rotation(armature, target_name, source_name, operation_index, label, axes, rate):
@@ -157,71 +352,100 @@ def _create_approximate_constraints(armature, operation, mapping):
     return count
 
 
-def populate_sop_state(armature: bpy.types.Object, bundle: ModelBundle) -> None:
+def rebuild_sop_preview(armature) -> None:
     state = armature.gbfr_sop
-    state.enabled = False
-    state.operations.clear()
+    mapping = _bone_map(armature)
+    rest = _rest_quaternions(armature)
     _remove_imported_constraints(armature)
-    state.minfo_path = str(bundle.minfo)
-    state.source_path = str(bundle.sop or "")
     state.imported_constraint_count = 0
     state.preview_operation_count = 0
     state.guarded_count = 0
     state.unresolved_count = 0
     state.missing_count = 0
-    if bundle.sop is None:
-        state.last_status = "工作区中没有找到同模型 SOP"
-        return
-
-    asset = load_sop(bundle.sop)
-    catalog = load_catalog(Path(__file__).parent / "data" / "sop_operations_zh.json")
-    mapping = _bone_map(armature)
-    rest = _rest_quaternions(armature)
-    state.version = f"0x{asset.version:08X}"
-    for operation in asset.operations:
-        description = catalog.get(operation.type_hash, SopDescription())
-        status = guarded_preview_status(operation, rest)
-        item = state.operations.add()
-        item.name = f"#{operation.index:03d} {description.name}"
-        item.operation_index = operation.index
+    for index, item in enumerate(state.operations):
+        try:
+            operation = _operation_from_item(item, armature, index)
+            status = guarded_preview_status(operation, rest)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            item.preview_status = "invalid_core_fields"
+            state.missing_count += 1
+            continue
         item.target_bone = operation.target_bone
         item.source_bone = operation.source_bone
         item.target_name = _display_bone(operation.target_bone, mapping)
         item.source_name = _display_bone(operation.source_bone, mapping)
-        item.type_hash = f"0x{operation.type_hash:08X}"
-        item.operation_name = description.name
-        item.category = description.category
-        item.discovery = description.discovery
-        item.discovery_label = description.discovery_label
-        item.runtime_label = description.runtime_label
         item.preview_status = status
-        item.purpose = description.purpose
-        item.metadata = f"0x{operation.metadata:08X}"
-        item.properties_json = json.dumps([
-            {
-                "hash": f"0x{value.hash:08X}", "type": "float" if value.value_type == 1 else "integer",
-                "value": value.value, "raw": f"0x{value.raw_value:08X}",
-            }
-            for value in operation.properties
-        ], ensure_ascii=False)
         if status == "approximate_constraint":
             created = _create_approximate_constraints(armature, operation, mapping)
             state.imported_constraint_count += created
-            if not created:
+            if created:
+                state.preview_operation_count += 1
+            else:
                 item.preview_status = "invalid_core_fields"
                 state.missing_count += 1
-            else:
-                state.preview_operation_count += 1
         elif status == "rest_guard_failed":
             state.guarded_count += 1
         elif status == "not_implemented":
             state.unresolved_count += 1
         else:
             state.missing_count += 1
-    state.active_operation_index = min(state.active_operation_index, max(0, len(state.operations) - 1))
-    state.enabled = True
     _set_constraints_enabled(armature, state.preview_constraints)
-    state.last_status = f"读取 {len(state.operations)} 条 SOP；创建 {state.imported_constraint_count} 个 Blender 近似约束"
+
+
+def populate_sop_state(
+    armature: bpy.types.Object,
+    bundle: ModelBundle,
+    load_path_override: str | Path | None = None,
+) -> None:
+    state = armature.gbfr_sop
+    state.enabled = False
+    state.suspend_updates = True
+    state.operations.clear()
+    _remove_imported_constraints(armature)
+    state.minfo_path = str(bundle.minfo)
+    state.edit_path = str(bundle.sop_edit)
+    state.source_baseline_path = str(bundle.sop_source or "")
+    state.imported_constraint_count = 0
+    state.preview_operation_count = 0
+    state.guarded_count = 0
+    state.unresolved_count = 0
+    state.missing_count = 0
+    load_path = Path(load_path_override) if load_path_override is not None else (
+        bundle.sop_edit if bundle.sop_edit.is_file() else bundle.sop
+    )
+    # A source restore changes only the in-memory asset. Keep watching the current
+    # unpack file so a later explicit export still detects outside modifications.
+    watch_path = bundle.sop_edit if bundle.sop_edit.is_file() else load_path
+    state.source_path = str(watch_path or "")
+    if load_path is None:
+        state.source_sha256 = ""
+        state.last_status = "工作区中没有找到同模型 SOP"
+        state.suspend_updates = False
+        return
+
+    asset = load_sop(load_path)
+    catalog = load_catalog(Path(__file__).parent / "data" / "sop_operations_zh.json")
+    mapping = _bone_map(armature)
+    rest = _rest_quaternions(armature)
+    state.version = f"0x{asset.version:08X}"
+    for operation in asset.operations:
+        description = catalog.get(operation.type_hash, SopDescription())
+        item = state.operations.add()
+        _populate_item(item, operation, description, guarded_preview_status(operation, rest), mapping)
+    state.active_operation_index = min(state.active_operation_index, max(0, len(state.operations) - 1))
+    state.source_sha256 = _sha256(watch_path)
+    state.new_target_ref = ""
+    state.new_source_ref = ""
+    state.new_axis = "1"
+    state.new_swing_rate = 0.5
+    state.new_twist_rate = 0.0
+    state.enabled = True
+    state.dirty = False
+    state.suspend_updates = False
+    rebuild_sop_preview(armature)
+    state.last_status = (
+        f"读取 {len(state.operations)} 条 SOP；创建 {state.imported_constraint_count} 个 Blender 近似约束"
+    )
 
 
 def _armature(context):
@@ -231,7 +455,13 @@ def _armature(context):
 class GBFR_OT_SopReload(Operator):
     bl_idname = "gbfr.sop_reload"
     bl_label = "重新导入 SOP"
-    bl_description = "重新读取工作区 SOP；不会导出或修改 SOP"
+    bl_description = "丢弃未导出编辑并重新读取工作区 SOP"
+
+    def invoke(self, context, event):
+        armature = _armature(context)
+        if armature is not None and armature.gbfr_sop.dirty:
+            return context.window_manager.invoke_confirm(self, event, title="丢弃未导出的 SOP 编辑？")
+        return self.execute(context)
 
     def execute(self, context):
         armature = _armature(context)
@@ -246,11 +476,172 @@ class GBFR_OT_SopReload(Operator):
         return {"FINISHED"}
 
 
+class GBFR_OT_SopAdd(Operator):
+    bl_idname = "gbfr.sop_add"
+    bl_label = "添加复制旋转"
+    bl_description = "添加已确认的 Swing/Twist 复制旋转 SOP 操作"
+    bl_options = {"UNDO"}
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_sop
+        try:
+            target = _bone_id(armature, state.new_target_ref)
+            source = _bone_id(armature, state.new_source_ref)
+            if target == source:
+                raise ValueError("SOP 目标骨和来源骨不能相同")
+            operation = make_swing_twist_operation(
+                target, source, int(state.new_axis), state.new_swing_rate, state.new_twist_rate,
+            )
+        except ValueError as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        catalog = load_catalog(Path(__file__).parent / "data" / "sop_operations_zh.json")
+        state.suspend_updates = True
+        item = state.operations.add()
+        _populate_item(
+            item, operation, catalog.get(operation.type_hash, SopDescription()),
+            guarded_preview_status(operation, _rest_quaternions(armature)), _bone_map(armature),
+        )
+        state.active_operation_index = len(state.operations) - 1
+        state.suspend_updates = False
+        state.dirty = True
+        rebuild_sop_preview(armature)
+        state.last_status = "已添加复制旋转；当前只在 Blender 内，需显式导出"
+        return {"FINISHED"}
+
+
+class GBFR_OT_SopDelete(Operator):
+    bl_idname = "gbfr.sop_delete"
+    bl_label = "删除约束"
+    bl_description = "只允许删除已确认可编辑的 Swing/Twist 操作"
+    bl_options = {"UNDO"}
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_sop
+        index = state.active_operation_index
+        if index < 0 or index >= len(state.operations) or not state.operations[index].editable:
+            self.report({"ERROR"}, "当前操作只读，不能删除")
+            return {"CANCELLED"}
+        state.operations.remove(index)
+        state.active_operation_index = min(index, max(0, len(state.operations) - 1))
+        state.dirty = True
+        rebuild_sop_preview(armature)
+        state.last_status = "已删除约束；当前只在 Blender 内，需显式导出"
+        return {"FINISHED"}
+
+
+class GBFR_OT_SopFullCopy(Operator):
+    bl_idname = "gbfr.sop_full_copy"
+    bl_label = "完整复制 1:1"
+    bl_description = "将当前约束的 Swing 和 Twist 比例都设为 1"
+    bl_options = {"UNDO"}
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_sop
+        index = state.active_operation_index
+        if index < 0 or index >= len(state.operations) or not state.operations[index].editable:
+            return {"CANCELLED"}
+        state.operations[index].swing_rate = 1.0
+        state.operations[index].twist_rate = 1.0
+        return {"FINISHED"}
+
+
+class GBFR_OT_SopPreviewRefresh(Operator):
+    bl_idname = "gbfr.sop_preview_refresh"
+    bl_label = "更新约束预览"
+    bl_description = "按当前未导出参数重建 Blender Copy Rotation 近似约束"
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        rebuild_sop_preview(armature)
+        armature.gbfr_sop.last_status = (
+            f"已更新预览：{armature.gbfr_sop.preview_operation_count} 条操作可执行"
+        )
+        return {"FINISHED"}
+
+
+class GBFR_OT_SopSave(Operator):
+    bl_idname = "gbfr.sop_save"
+    bl_label = "单独导出 SOP 到 unpack"
+    bl_description = "保留未知操作与属性，将当前 SOP 编辑原子写入工作区 unpack"
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_sop
+        target = Path(state.edit_path)
+        try:
+            if not _model_export_ready(context, state):
+                raise ValueError("请先导出一份当前主体到 unpack，再单独导出 SOP")
+            export_sop_to_unpack(armature)
+            populate_sop_state(armature, resolve_model_bundle(state.minfo_path))
+        except Exception as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        state.last_status = f"已导出 {len(state.operations)} 条 SOP 到 {target.name}"
+        self.report({"INFO"}, state.last_status)
+        return {"FINISHED"}
+
+
+class GBFR_OT_SopRestoreSource(Operator):
+    bl_idname = "gbfr.sop_restore_source"
+    bl_label = "从 source 恢复 SOP"
+    bl_description = "只在 Blender 内恢复 source SOP；显式导出前不写入文件"
+
+    def invoke(self, context, _event):
+        armature = _armature(context)
+        if armature is None or not armature.gbfr_sop.enabled:
+            return {"CANCELLED"}
+        return context.window_manager.invoke_props_dialog(self, width=480)
+
+    def draw(self, _context):
+        layout = self.layout
+        layout.label(text="将放弃 Blender 中尚未导出的全部 SOP 修改。", icon="ERROR")
+        layout.label(text="只恢复到 Blender 内存；unpack 和 build 都不会立即修改。")
+
+    def execute(self, context):
+        armature = _armature(context)
+        if armature is None:
+            return {"CANCELLED"}
+        state = armature.gbfr_sop
+        try:
+            source = Path(state.source_baseline_path)
+            if not source.is_file():
+                raise ValueError("工作区没有可用的 source SOP 基线")
+            populate_sop_state(
+                armature, resolve_model_bundle(state.minfo_path), load_path_override=source,
+            )
+        except Exception as error:
+            state.last_status = str(error)
+            self.report({"ERROR"}, state.last_status)
+            return {"CANCELLED"}
+        state.dirty = True
+        state.last_status = f"已在 Blender 内恢复 {source.name}；需显式导出"
+        self.report({"INFO"}, state.last_status)
+        return {"FINISHED"}
+
+
 class GBFR_UL_SopOperations(UIList):
-    def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_propname, _index):
-        icon = "CONSTRAINT" if item.preview_status == "approximate_constraint" else "ERROR" if item.preview_status == "rest_guard_failed" else "QUESTION"
+    def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_propname, index):
+        icon = (
+            "CONSTRAINT" if item.preview_status == "approximate_constraint"
+            else "ERROR" if item.preview_status == "rest_guard_failed"
+            else "QUESTION"
+        )
         row = layout.row(align=True)
-        row.label(text=f"#{item.operation_index:03d}", icon=icon)
+        row.label(text=f"#{index:03d}" if item.operation_index >= 0 else "新增", icon=icon)
         row.label(text=item.operation_name)
         row.label(text=item.target_name)
 
@@ -269,25 +660,74 @@ class GBFR_PT_SopInspector(Panel):
         return armature is not None and hasattr(armature, "gbfr_sop") and armature.gbfr_sop.enabled
 
     def draw(self, context):
-        state = _armature(context).gbfr_sop
+        armature = _armature(context)
+        state = armature.gbfr_sop
         layout = self.layout
-        row = layout.row(align=True)
-        row.prop(state, "preview_constraints", text="近似约束", toggle=True, icon="CONSTRAINT")
-        row.label(text=f"{state.preview_operation_count} 可用 · {state.unresolved_count} 未探明 · {state.guarded_count} 拦截")
+
+        reminder = layout.box()
+        reminder.label(text="SOP 使用 unpack 主体骨架基准", icon="INFO")
+        reminder.label(text="修改骨架后，请先“导出到工作区”再编辑或导出 SOP")
+        if not _model_export_ready(context, state):
+            warning = reminder.row()
+            warning.alert = True
+            warning.label(text="当前主体尚未导出到 unpack", icon="ERROR")
+
+        toolbar = layout.row(align=True)
+        toolbar.operator("gbfr.sop_save", text="单独导出 SOP", icon="EXPORT")
+        toolbar.operator("gbfr.sop_reload", text="重载 unpack", icon="FILE_REFRESH")
+        toolbar.operator("gbfr.sop_restore_source", text="恢复 source", icon="LOOP_BACK")
+        toolbar.operator("gbfr.sop_preview_refresh", text="", icon="CONSTRAINT")
+        toolbar.prop(state, "preview_constraints", text="", toggle=True, icon="HIDE_OFF")
+        if state.dirty:
+            toolbar.label(text="未导出", icon="ERROR")
+
+        summary = layout.row(align=True)
+        summary.label(text=f"{state.preview_operation_count} 可用 · {state.unresolved_count} 未探明 · {state.guarded_count} 拦截")
         if state.missing_count:
-            row.label(text=str(state.missing_count), icon="ERROR")
-        layout.template_list("GBFR_UL_SopOperations", "", state, "operations", state, "active_operation_index", rows=7)
-        if not state.operations:
-            return
-        item = state.operations[state.active_operation_index]
-        details = layout.column(align=True)
-        details.label(text=f"{item.target_name} ← {item.source_name}", icon="BONE_DATA")
-        details.label(text=STATUS_LABELS.get(item.preview_status, item.preview_status))
+            summary.label(text=str(state.missing_count), icon="ERROR")
+
+        layout.template_list(
+            "GBFR_UL_SopOperations", "", state, "operations",
+            state, "active_operation_index", rows=7,
+        )
+
+        if state.operations:
+            item = state.operations[state.active_operation_index]
+            box = layout.box()
+            box.label(text=f"{item.target_name} ← {item.source_name}", icon="BONE_DATA")
+            box.label(text=STATUS_LABELS.get(item.preview_status, item.preview_status))
+            if item.editable:
+                box.prop_search(item, "target_ref", armature.data, "bones", text="目标骨")
+                box.prop_search(item, "source_ref", armature.data, "bones", text="来源骨")
+                box.prop(item, "axis", expand=True)
+                box.prop(item, "swing_rate", slider=True)
+                box.prop(item, "twist_rate", slider=True)
+                actions = box.row(align=True)
+                actions.operator("gbfr.sop_full_copy", text="完整复制 1:1")
+                actions.operator("gbfr.sop_delete", text="", icon="REMOVE")
+            else:
+                box.label(text=f"{item.operation_name} · {item.type_hash}")
+                box.label(text="未知或未完整探明字段保持只读")
+
+        add = layout.box()
+        add.label(text="新增复制旋转", icon="ADD")
+        add.prop_search(state, "new_target_ref", armature.data, "bones", text="目标裙骨")
+        add.prop_search(state, "new_source_ref", armature.data, "bones", text="来源腿骨")
+        add.prop(state, "new_axis", expand=True)
+        add.prop(state, "new_swing_rate", slider=True)
+        add.prop(state, "new_twist_rate", slider=True)
+        add.operator("gbfr.sop_add", text="添加约束", icon="ADD")
+
+        if state.last_status:
+            layout.label(text=state.last_status, icon="INFO")
 
 
 classes = (
     GBFRSopOperationProperties, GBFRSopStateProperties,
-    GBFR_OT_SopReload, GBFR_UL_SopOperations, GBFR_PT_SopInspector,
+    GBFR_OT_SopReload, GBFR_OT_SopAdd, GBFR_OT_SopDelete,
+    GBFR_OT_SopFullCopy, GBFR_OT_SopPreviewRefresh, GBFR_OT_SopSave,
+    GBFR_OT_SopRestoreSource,
+    GBFR_UL_SopOperations, GBFR_PT_SopInspector,
 )
 
 

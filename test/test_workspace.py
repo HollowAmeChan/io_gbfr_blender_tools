@@ -18,6 +18,7 @@ class WorkspaceTests(unittest.TestCase):
                 "minfo": "unpack/data/model/pl/pl9999/pl9999.minfo",
                 "source_minfo": "source/data/model/pl/pl9999/pl9999.minfo",
                 "sop": "source/data/model/pl/pl9999/pl9999.sop",
+                "unpack_sop": "unpack/data/model/pl/pl9999/pl9999.sop",
                 "mot": "source/data/pl/pl9999/pl9999_0001.mot",
                 "unpack_mot": "unpack/data/pl/pl9999/pl9999_0001.mot",
                 "skeleton": "unpack/data/model/pl/pl9999/pl9999.skeleton",
@@ -47,6 +48,7 @@ class WorkspaceTests(unittest.TestCase):
                 "ModelFiles": [
                     {"FileType": "minfo", "Input": paths["minfo"], "Source": paths["source_minfo"]},
                     {"FileType": "skeleton", "Input": paths["skeleton"], "Source": paths["source_skeleton"]},
+                    {"FileType": "sop", "Input": paths["unpack_sop"], "Source": paths["sop"]},
                     {"FileType": "mmesh", "Input": paths["mmesh"], "Source": paths["source_mmesh"]},
                     {"FileType": "mmesh", "Input": paths["mmesh_shadow"], "Source": paths["source_mmesh_shadow"]},
                     {"FileType": "mmesh", "Input": paths["mmesh_lod1"], "Source": paths["source_mmesh_lod1"]},
@@ -76,6 +78,8 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(root / paths["source_texture"], resolve_albedo_texture(bundle.texture_roots, "pl9999_body"))
             self.assertEqual(root / paths["material"], bundle.material_json)
             self.assertEqual(root / paths["sop"], bundle.sop)
+            self.assertEqual(root / paths["sop"], bundle.sop_source)
+            self.assertEqual(root / paths["unpack_sop"], bundle.sop_edit)
             self.assertEqual(1, len(bundle.animations))
             animation = bundle.animations[0]
             self.assertEqual("pl9999_0001.mot", animation.name)
@@ -83,6 +87,9 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(root / paths["unpack_mot"], animation.unpack)
             self.assertEqual(root / paths["mot"], animation.preview)
             unpack_bundle = resolve_model_bundle(root / paths["minfo"])
+            self.assertEqual(root / paths["unpack_sop"], unpack_bundle.sop)
+            self.assertEqual(root / paths["sop"], unpack_bundle.sop_source)
+            self.assertEqual(root / paths["unpack_sop"], unpack_bundle.sop_edit)
             self.assertEqual(root / paths["unpack_mot"], unpack_bundle.animations[0].preview)
             self.assertEqual([("clh", 1), ("clp", 0)], [(item.category, item.group_id) for item in bundle.cloth_files])
             clp = next(item for item in bundle.cloth_files if item.category == "clp")
@@ -100,6 +107,8 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(root / paths["source_skeleton"], targets.reference_skeleton)
             self.assertEqual(root / paths["mmesh"], targets.mmesh)
             self.assertEqual(tuple(root / paths[name] for name in ("mmesh", "mmesh_lod1", "mmesh_shadow")), targets.mmeshes)
+            self.assertEqual(root / paths["sop"], targets.sop_source)
+            self.assertEqual(root / paths["unpack_sop"], targets.sop)
 
             (root / paths["clp"]).unlink()
             with self.assertRaises(WorkspaceError):
@@ -134,6 +143,42 @@ class WorkspaceTests(unittest.TestCase):
             (root / "workspace.json").write_text(json.dumps(workspace), encoding="utf-8")
             with self.assertRaisesRegex(WorkspaceError, "属于不同模型"):
                 resolve_model_bundle(minfo, require_cloth_xml=False)
+
+    def test_legacy_workspace_derives_sop_paths_from_minfo(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_minfo = root / "source/custom/pl9999.minfo"
+            unpack_minfo = root / "unpack/custom/pl9999.minfo"
+            source_sop = source_minfo.with_suffix(".sop")
+            source_mmesh = root / "source/custom/pl9999.mmesh"
+            unpack_mmesh = root / "unpack/custom/pl9999.mmesh"
+            for path in (source_minfo, unpack_minfo, source_sop, source_mmesh, unpack_mmesh):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"fixture")
+            workspace_path = root / "workspace.json"
+            workspace_path.write_text(json.dumps({
+                "Version": 1,
+                "ModelFiles": [
+                    {
+                        "FileType": "minfo",
+                        "Source": str(source_minfo.relative_to(root)),
+                        "Input": str(unpack_minfo.relative_to(root)),
+                    },
+                    {
+                        "FileType": "mmesh",
+                        "Source": str(source_mmesh.relative_to(root)),
+                        "Input": str(unpack_mmesh.relative_to(root)),
+                    },
+                ],
+            }), encoding="utf-8")
+
+            bundle = resolve_model_bundle(source_minfo)
+            targets = resolve_model_export_targets(workspace_path, "pl9999")
+            self.assertEqual(source_sop, bundle.sop)
+            self.assertEqual(source_sop, bundle.sop_source)
+            self.assertEqual(unpack_minfo.with_suffix(".sop"), bundle.sop_edit)
+            self.assertEqual(source_sop, targets.sop_source)
+            self.assertEqual(unpack_minfo.with_suffix(".sop"), targets.sop)
 
     def test_rejects_unregistered_minfo(self):
         with tempfile.TemporaryDirectory() as temporary:

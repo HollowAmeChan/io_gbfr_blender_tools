@@ -398,7 +398,7 @@ class ExportSomeData(Operator, ImportHelper):
             box.label(text=str(error), icon="ERROR")
             return
         box.label(text="将覆盖以下 unpack 文件", icon="EXPORT")
-        for target in (targets.minfo, targets.skeleton, *targets.mmeshes):
+        for target in (targets.minfo, targets.skeleton, *targets.mmeshes, targets.sop):
             if target is None:
                 continue
             box.label(text=str(target.relative_to(targets.workspace_root)), icon="FILE")
@@ -417,6 +417,11 @@ class ExportSomeData(Operator, ImportHelper):
             box.label(text="当前会话的全部 CLP/CLH 将同时写入 unpack XML", icon="PHYSICS")
         else:
             box.label(text="当前模型未登记 CLP/CLH，不会写入 cloth", icon="INFO")
+        sop_state = getattr(active_session_armature(context), "gbfr_sop", None)
+        if targets.sop is not None and sop_state is not None and sop_state.enabled:
+            box.label(text="当前 Blender 内的 SOP 编辑将同时写入 unpack", icon="CONSTRAINT")
+        elif targets.sop_source is not None:
+            box.label(text="source SOP 将随主体复制到 unpack", icon="CONSTRAINT")
 
     def execute(self, context):
         from .gbfr_session import active_session_armature, active_session_collection, active_session_root
@@ -458,6 +463,7 @@ class ExportSomeData(Operator, ImportHelper):
                 filled_lods = _fill_missing_regular_lods(export_root, export_collection, targets)
 
             cloth_count = 0
+            sop_count = 0
             with tempfile.TemporaryDirectory(prefix=f"gbfr_v2_{targets.model_id}_") as staging:
                 staging_root = Path(staging)
                 exported_bone_names = gbfr_model_export_v2.write_some_data(
@@ -476,13 +482,33 @@ class ExportSomeData(Operator, ImportHelper):
                         cloth_armature, targets.minfo, targets.workspace_json,
                         staging_root / "cloth", exported_bone_names,
                     )
+                staged_sop = ()
+                if targets.sop is not None:
+                    sop_staging = staging_root / "sop" / targets.sop.name
+                    sop_staging.parent.mkdir(parents=True, exist_ok=True)
+                    sop_state = getattr(cloth_armature, "gbfr_sop", None) if cloth_armature is not None else None
+                    if sop_state is not None and sop_state.enabled:
+                        from .gbfr_sop_blender import stage_sop_for_workspace
+                        stage_sop_for_workspace(cloth_armature, sop_staging)
+                    elif targets.sop_source is not None:
+                        shutil.copy2(targets.sop_source, sop_staging)
+                    if sop_staging.is_file():
+                        staged_sop = ((sop_staging, targets.sop),)
                 _install_workspace_export(
-                    staging_root, targets, extra_files=staged_cloth,
+                    staging_root, targets, extra_files=(*staged_cloth, *staged_sop),
                 )
                 cloth_count = len(staged_cloth)
+                sop_count = len(staged_sop)
 
             state.workspace_path = str(targets.workspace_json)
             state.resolved_minfo_path = str(targets.minfo)
+            if sop_count and cloth_armature is not None and getattr(cloth_armature, "gbfr_sop", None) is not None:
+                from .gbfr_sop_blender import populate_sop_state
+                from .gbfr_workspace import resolve_model_bundle
+                populate_sop_state(
+                    cloth_armature,
+                    resolve_model_bundle(targets.minfo, targets.workspace_json),
+                )
             pinned, migrated, deduplicated = cloth_repairs
             repair_detail = ""
             if pinned or migrated or deduplicated:
@@ -490,9 +516,9 @@ class ExportSomeData(Operator, ImportHelper):
                     f"；Cloth 骨号修复 {pinned}，引用迁移 {migrated}，重复节点合并 {deduplicated}"
                 )
             if filled_lods:
-                state.last_status = f"已导出模型和 {cloth_count} 个 Cloth XML 到 unpack；LOD0 补齐 {', '.join(filled_lods)}{repair_detail}"
+                state.last_status = f"已导出模型、{cloth_count} 个 Cloth XML 和 {sop_count} 个 SOP 到 unpack；LOD0 补齐 {', '.join(filled_lods)}{repair_detail}"
             else:
-                state.last_status = f"已导出全部 LOD 和 {cloth_count} 个 Cloth XML 到 unpack{repair_detail}"
+                state.last_status = f"已导出全部 LOD、{cloth_count} 个 Cloth XML 和 {sop_count} 个 SOP 到 unpack{repair_detail}"
             self.report({"INFO"}, f"已导出到 {targets.workspace_root / 'unpack'}")
             return {"FINISHED"}
         except Exception as error:

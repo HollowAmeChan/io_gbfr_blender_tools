@@ -44,6 +44,8 @@ class ModelBundle:
     mmeshes: tuple[Path, ...]
     material_json: Path | None
     sop: Path | None
+    sop_source: Path | None
+    sop_edit: Path
     sop_report: dict | None
     animations: tuple[AnimationAsset, ...]
     cloth_files: tuple[ClothFileRecord, ...]
@@ -64,6 +66,8 @@ class ModelExportTargets:
     minfo: Path
     skeleton: Path | None
     mmeshes: tuple[Path, ...]
+    sop_source: Path | None
+    sop: Path | None
 
     @property
     def mmesh(self) -> Path:
@@ -207,8 +211,17 @@ def resolve_model_export_targets(workspace_json: str | Path, model_id: str) -> M
     records = list(document.get("ModelFiles") or [])
     minfo_record = _find_model_record(records, "minfo", model_id)
     skeleton_record = _find_optional_model_record(records, "skeleton", model_id)
+    sop_record = _find_optional_model_record(records, "sop", model_id)
     mmesh_records = _find_mmesh_records(records, model_id)
     unpack_root = _asset_path(root, str(document.get("UnpackRoot") or "unpack")).resolve()
+    if sop_record:
+        sop_source = _existing_asset_path(root, sop_record, keys=("Source", "Input"))
+        sop_target = _unpack_target(root, unpack_root, sop_record, "sop")
+    else:
+        source_value = minfo_record.get("Source")
+        source_candidate = _asset_path(root, source_value).with_suffix(".sop") if source_value else None
+        sop_source = source_candidate.resolve() if source_candidate is not None and source_candidate.is_file() else None
+        sop_target = _unpack_target(root, unpack_root, minfo_record, "minfo").with_suffix(".sop") if sop_source else None
     return ModelExportTargets(
         workspace_json=workspace_path,
         workspace_root=root,
@@ -218,6 +231,8 @@ def resolve_model_export_targets(workspace_json: str | Path, model_id: str) -> M
         minfo=_unpack_target(root, unpack_root, minfo_record, "minfo"),
         skeleton=_unpack_target(root, unpack_root, skeleton_record, "skeleton") if skeleton_record else None,
         mmeshes=tuple(_unpack_target(root, unpack_root, record, "mmesh") for record in mmesh_records),
+        sop_source=sop_source,
+        sop=sop_target,
     )
 
 
@@ -268,22 +283,32 @@ def resolve_model_bundle(
     material_candidates.append(root / ("unpack" if prefer_source else "source") / "data" / "model" / model_id[:2] / model_id / "vars" / "0.mmat.json")
     material_json = next((path.resolve() for path in material_candidates if path.is_file()), None)
 
+    sop_record = _find_optional_model_record(records, "sop", model_id)
     sop_report = next(
         (record for record in document.get("SkeletonConstraints") or []
          if str(record.get("ModelId", "")).casefold() == model_id.casefold()),
         None,
     )
-    sop_candidates = []
-    if sop_report:
-        for key in (("Source", "Input") if prefer_source else ("Input", "Source")):
-            value = sop_report.get(key)
-            if value:
-                sop_candidates.append(_asset_path(root, value))
-    for key in (("Source", "Input") if prefer_source else ("Input", "Source")):
-        value = minfo_matches[0].get(key)
-        if value:
-            sop_candidates.append(_asset_path(root, value).with_suffix(".sop"))
-    sop = next((path.resolve() for path in sop_candidates if path.is_file()), None)
+    source_candidates = []
+    if sop_record and sop_record.get("Source"):
+        source_candidates.append(_asset_path(root, sop_record["Source"]))
+    if sop_report and sop_report.get("Source"):
+        source_candidates.append(_asset_path(root, sop_report["Source"]))
+    if minfo_matches[0].get("Source"):
+        source_candidates.append(_asset_path(root, minfo_matches[0]["Source"]).with_suffix(".sop"))
+    sop_source = next((path.resolve() for path in source_candidates if path.is_file()), None)
+    if sop_record and sop_record.get("Input"):
+        sop_edit = _asset_path(root, sop_record["Input"]).resolve()
+    else:
+        input_value = minfo_matches[0].get("Input")
+        if not input_value:
+            raise WorkspaceError(f"{model_id} 的 minfo 记录缺少 unpack 输入路径")
+        sop_edit = _asset_path(root, input_value).with_suffix(".sop").resolve()
+    try:
+        sop_edit.relative_to(unpack_root.resolve())
+    except ValueError as error:
+        raise WorkspaceError(f"SOP 编辑路径不在工作区 unpack 中: {sop_edit}") from error
+    sop = sop_source if prefer_source else (sop_edit if sop_edit.is_file() else sop_source)
     animations = []
     if "AnimationFiles" in document:
         animation_names = set()
@@ -372,6 +397,8 @@ def resolve_model_bundle(
         mmeshes=mmeshes,
         material_json=material_json,
         sop=sop,
+        sop_source=sop_source,
+        sop_edit=sop_edit,
         sop_report=sop_report,
         animations=tuple(animations),
         cloth_files=tuple(cloth_files),

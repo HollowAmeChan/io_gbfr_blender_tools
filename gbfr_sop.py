@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import os
 from pathlib import Path
 import struct
 
@@ -14,6 +15,7 @@ TARGET_BONE_PROPERTY = 0x5B0292DD
 SOURCE_BONE_PROPERTY = 0x1B5B0525
 SWING_TWIST_OPERATION = 0xB1FFF4E6
 TWIST_OPERATION = 0x61D80537
+COMMON_ZERO_PROPERTY = 0x64DE2725
 AXIS_X_PROPERTY = 0x2E933545
 AXIS_Y_PROPERTY = 0x599405D3
 AXIS_Z_PROPERTY = 0xC09D5469
@@ -74,6 +76,94 @@ class SopDescription:
     purpose: str = "没有该操作的用途记录；原始属性仍会保留。"
 
 
+def _float_property(property_hash: int, value: float) -> SopProperty:
+    if not math.isfinite(float(value)):
+        raise ValueError("SOP 浮点属性必须是有限值")
+    raw = struct.unpack("<I", struct.pack("<f", float(value)))[0]
+    return SopProperty(property_hash, 1, raw)
+
+
+def make_swing_twist_operation(
+    target_bone: int,
+    source_bone: int,
+    axis: int,
+    swing_rate: float,
+    twist_rate: float,
+    *,
+    index: int = -1,
+) -> SopOperation:
+    if axis not in {0, 1, 2}:
+        raise ValueError("SOP 旋转轴必须是 X、Y 或 Z")
+    if target_bone < 0 or source_bone < 0:
+        raise ValueError("SOP target/source 骨骼 ID 无效")
+    axes = tuple(1.0 if value == axis else 0.0 for value in range(3))
+    return SopOperation(
+        index=index,
+        type_hash=SWING_TWIST_OPERATION,
+        metadata=0x00090101,
+        target_bone=int(target_bone),
+        source_bone=int(source_bone),
+        properties=(
+            SopProperty(COMMON_ZERO_PROPERTY, 0, 0),
+            _float_property(AXIS_X_PROPERTY, axes[0]),
+            _float_property(AXIS_Y_PROPERTY, axes[1]),
+            _float_property(AXIS_Z_PROPERTY, axes[2]),
+            _float_property(TWIST_RATE_PROPERTY, twist_rate),
+            _float_property(SWING_RATE_PROPERTY, swing_rate),
+            _float_property(OFFSET_X_PROPERTY, 0.0),
+            _float_property(OFFSET_Y_PROPERTY, 0.0),
+            _float_property(OFFSET_Z_PROPERTY, 0.0),
+        ),
+    )
+
+
+def is_editable_swing_twist(operation: SopOperation) -> bool:
+    required = (
+        AXIS_X_PROPERTY, AXIS_Y_PROPERTY, AXIS_Z_PROPERTY,
+        TWIST_RATE_PROPERTY, SWING_RATE_PROPERTY,
+    )
+    return operation.type_hash == SWING_TWIST_OPERATION and all(
+        (value := operation.find(property_hash)) is not None and value.value_type == 1
+        for property_hash in required
+    )
+
+
+def update_swing_twist_operation(
+    operation: SopOperation,
+    *,
+    target_bone: int,
+    source_bone: int,
+    axis: int,
+    swing_rate: float,
+    twist_rate: float,
+) -> SopOperation:
+    if not is_editable_swing_twist(operation):
+        raise ValueError("只能编辑字段完整的 Swing/Twist SOP 操作")
+    if axis not in {0, 1, 2}:
+        raise ValueError("SOP 旋转轴必须是 X、Y 或 Z")
+    if target_bone < 0 or source_bone < 0:
+        raise ValueError("SOP target/source 骨骼 ID 无效")
+    replacements = {
+        AXIS_X_PROPERTY: 1.0 if axis == 0 else 0.0,
+        AXIS_Y_PROPERTY: 1.0 if axis == 1 else 0.0,
+        AXIS_Z_PROPERTY: 1.0 if axis == 2 else 0.0,
+        SWING_RATE_PROPERTY: swing_rate,
+        TWIST_RATE_PROPERTY: twist_rate,
+    }
+    properties = tuple(
+        _float_property(value.hash, replacements[value.hash]) if value.hash in replacements else value
+        for value in operation.properties
+    )
+    return SopOperation(
+        index=operation.index,
+        type_hash=operation.type_hash,
+        metadata=operation.metadata,
+        target_bone=int(target_bone),
+        source_bone=int(source_bone),
+        properties=properties,
+    )
+
+
 def load_sop(path: str | Path) -> SopAsset:
     path = Path(path)
     data = path.read_bytes()
@@ -112,6 +202,62 @@ def load_sop(path: str | Path) -> SopAsset:
             properties.append(SopProperty(*item))
         operations.append(SopOperation(index, type_hash, metadata, target, source, tuple(properties)))
     return SopAsset(path.resolve(), version, tuple(operations))
+
+
+def encode_sop(asset: SopAsset) -> bytes:
+    if asset.version != SOP_VERSION:
+        raise ValueError(f"不支持的 SOP 版本 0x{asset.version:08X}")
+    if len(asset.operations) > 100_000:
+        raise ValueError("SOP 操作数量不合理")
+
+    records = []
+    for operation in asset.operations:
+        if len(operation.properties) > 0xFF:
+            raise ValueError("单条 SOP 操作属性超过 255 个")
+        if not 0 <= operation.target_bone <= 0xFFFFFFFF or not 0 <= operation.source_bone <= 0xFFFFFFFF:
+            raise ValueError("SOP target/source 骨骼 ID 越界")
+        metadata = (operation.metadata & ~0x00FF0000) | (len(operation.properties) << 16)
+        record = bytearray(struct.pack(
+            "<6I", operation.type_hash, metadata,
+            TARGET_BONE_PROPERTY, operation.target_bone,
+            SOURCE_BONE_PROPERTY, operation.source_bone,
+        ))
+        for value in operation.properties:
+            if value.value_type not in {0, 1}:
+                raise ValueError(f"SOP 属性类型 {value.value_type} 不支持")
+            record.extend(struct.pack("<3I", value.hash, value.value_type, value.raw_value))
+        records.append(bytes(record))
+
+    header_size = 12 + len(records) * 4
+    offsets = []
+    offset = header_size
+    for record in records:
+        offsets.append(offset)
+        offset += len(record)
+    header = bytearray(struct.pack("<4sII", b"sop\0", asset.version, len(records)))
+    if offsets:
+        header.extend(struct.pack(f"<{len(offsets)}I", *offsets))
+    return bytes(header) + b"".join(records)
+
+
+def _atomic_write(path: Path, data: bytes) -> Path:
+    path = Path(path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        with temporary.open("wb") as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return path
+
+
+def save_sop(path: str | Path, asset: SopAsset) -> Path:
+    return _atomic_write(Path(path), encode_sop(asset))
 
 
 def load_catalog(path: str | Path) -> dict[int, SopDescription]:
