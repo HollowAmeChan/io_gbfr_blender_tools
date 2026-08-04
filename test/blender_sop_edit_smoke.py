@@ -11,12 +11,14 @@ bpy.ops.preferences.addon_enable(module="io_gbfr_blender_tools")
 
 from io_gbfr_blender_tools.gbfr_session import configure_session
 from io_gbfr_blender_tools.gbfr_sop import (
-    SOP_VERSION, SWING_RATE_PROPERTY, SopAsset, load_sop,
-    make_swing_twist_operation, save_sop,
+    OFFSET_X_PROPERTY, OFFSET_Y_PROPERTY, OFFSET_Z_PROPERTY, SOP_VERSION,
+    SWING_RATE_PROPERTY, SopAsset, evaluate_core_operation, load_sop,
+    make_swing_twist_operation, quaternion_error, save_sop,
 )
 from io_gbfr_blender_tools.gbfr_sop_blender import (
-    CONSTRAINT_PREFIX, GBFR_UL_SopOperations, _model_export_ready,
-    populate_sop_state, stage_sop_for_workspace,
+    CONSTRAINT_PREFIX, GBFR_UL_SopOperations, _asset_from_state,
+    _export_rest_quaternion, _model_export_ready, populate_sop_state,
+    stage_sop_for_workspace,
 )
 from io_gbfr_blender_tools.gbfr_workspace import resolve_model_bundle
 
@@ -67,7 +69,7 @@ with tempfile.TemporaryDirectory() as temporary:
     target_bone = armature.data.edit_bones.new("_a50")
     target_bone.head, target_bone.tail = (1.0, 0.0, 0.0), (1.0, 1.0, 0.0)
     skirt_bone = armature.data.edit_bones.new("Skirt_B_01")
-    skirt_bone.head, skirt_bone.tail = (2.0, 0.0, 0.0), (2.0, 1.0, 0.0)
+    skirt_bone.head, skirt_bone.tail = (2.0, 0.0, 0.0), (2.0, 0.0, 1.0)
     bpy.ops.object.mode_set(mode="OBJECT")
     for name, bone_id in (("_00e", 0x00E), ("_a50", 0xA50)):
         bone = armature.data.bones[name]
@@ -125,6 +127,21 @@ with tempfile.TemporaryDirectory() as temporary:
         if constraint.name.startswith(CONSTRAINT_PREFIX)
     ]
     assert len(skirt_constraints) == 2
+    assert all(constraint.target_space == "LOCAL_OWNER_ORIENT" for constraint in skirt_constraints)
+    swing_constraint = next(
+        constraint for constraint in skirt_constraints if "Swing" in constraint.name
+    )
+    assert swing_constraint.use_x and swing_constraint.use_y and not swing_constraint.use_z
+
+    authored = _asset_from_state(armature).operations[1]
+    offset = tuple(authored.floating(value) for value in (
+        OFFSET_X_PROPERTY, OFFSET_Y_PROPERTY, OFFSET_Z_PROPERTY,
+    ))
+    assert abs(offset[0]) > 1.0, offset
+    source_rest = tuple(_export_rest_quaternion(armature, "_00e"))
+    target_rest = tuple(_export_rest_quaternion(armature, "Skirt_B_01"))
+    evaluated_rest = evaluate_core_operation(authored, source_rest)
+    assert quaternion_error(evaluated_rest, target_rest) < 1e-5
     assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
     assert len(state.operations) == 1
 

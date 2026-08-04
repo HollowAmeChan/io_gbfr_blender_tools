@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import bpy
+from mathutils import Euler, Quaternion, Vector
 from bpy.props import (
     BoolProperty, CollectionProperty, EnumProperty, FloatProperty,
     IntProperty, PointerProperty, StringProperty,
@@ -14,9 +15,10 @@ from bpy.props import (
 from bpy.types import Operator, Panel, PropertyGroup, UIList
 
 from .gbfr_sop import (
-    SOP_VERSION, SWING_RATE_PROPERTY, SWING_TWIST_OPERATION,
-    TWIST_RATE_PROPERTY, SopAsset, SopDescription, SopOperation, SopProperty,
-    dominant_axis, guarded_preview_status, is_editable_swing_twist,
+    OFFSET_X_PROPERTY, OFFSET_Y_PROPERTY, OFFSET_Z_PROPERTY, SOP_VERSION,
+    SWING_RATE_PROPERTY, SWING_TWIST_OPERATION, TWIST_RATE_PROPERTY,
+    SopAsset, SopDescription, SopOperation, SopProperty, dominant_axis,
+    evaluate_core_operation, guarded_preview_status, is_editable_swing_twist,
     load_catalog, load_sop, make_swing_twist_operation, save_sop,
     update_swing_twist_operation,
 )
@@ -99,6 +101,69 @@ def _rest_quaternions(armature):
     return result
 
 
+def _export_rest_quaternion(armature, bone_name: str) -> Quaternion:
+    bone = armature.data.bones.get(bone_name)
+    if bone is None:
+        raise ValueError(f"骨骼不存在: {bone_name or '未选择'}")
+    matrix = bone.matrix_local.copy()
+    if bone.parent is not None:
+        matrix = bone.parent.matrix_local.inverted() @ matrix
+    return matrix.to_quaternion().normalized()
+
+
+def _require_parallel_bones(armature, target_name: str, source_name: str) -> None:
+    target = armature.data.bones.get(target_name)
+    source = armature.data.bones.get(source_name)
+    if target is None or source is None:
+        raise ValueError("SOP 目标骨或来源骨不存在")
+    target_parent = target.parent.name if target.parent is not None else ""
+    source_parent = source.parent.name if source.parent is not None else ""
+    if target_parent != source_parent:
+        raise ValueError(
+            "裙骨复制旋转要求目标骨与来源骨具有同一父级；"
+            f"当前为 {target_parent or '无父级'} / {source_parent or '无父级'}"
+        )
+
+
+def _operation_offset_quaternion(operation: SopOperation) -> Quaternion:
+    values = tuple(
+        operation.floating(property_hash, 0.0) or 0.0
+        for property_hash in (OFFSET_X_PROPERTY, OFFSET_Y_PROPERTY, OFFSET_Z_PROPERTY)
+    )
+    return Euler(values, "XYZ").to_quaternion().normalized()
+
+
+def _fit_operation_rest_offset(
+    armature, operation: SopOperation, target_name: str, source_name: str,
+) -> SopOperation:
+    _require_parallel_bones(armature, target_name, source_name)
+    zero_offset = update_swing_twist_operation(
+        operation,
+        target_bone=operation.target_bone,
+        source_bone=operation.source_bone,
+        axis=dominant_axis(operation),
+        swing_rate=operation.floating(SWING_RATE_PROPERTY, 0.0) or 0.0,
+        twist_rate=operation.floating(TWIST_RATE_PROPERTY, 0.0) or 0.0,
+        offset_xyz=(0.0, 0.0, 0.0),
+    )
+    source_rest = _export_rest_quaternion(armature, source_name)
+    target_rest = _export_rest_quaternion(armature, target_name)
+    base_value = evaluate_core_operation(zero_offset, tuple(source_rest))
+    if base_value is None:
+        raise ValueError("无法计算裙骨复制旋转的静止姿态")
+    offset = Quaternion(base_value).normalized().inverted() @ target_rest
+    offset_xyz = tuple(float(value) for value in offset.to_euler("XYZ"))
+    return update_swing_twist_operation(
+        zero_offset,
+        target_bone=operation.target_bone,
+        source_bone=operation.source_bone,
+        axis=dominant_axis(operation),
+        swing_rate=operation.floating(SWING_RATE_PROPERTY, 0.0) or 0.0,
+        twist_rate=operation.floating(TWIST_RATE_PROPERTY, 0.0) or 0.0,
+        offset_xyz=offset_xyz,
+    )
+
+
 def _blender_preview_status(operation, mapping, rest_quaternions):
     status = guarded_preview_status(operation, rest_quaternions)
     if (
@@ -155,6 +220,7 @@ def _operation_edit_update(item, _context):
 class GBFRSopOperationProperties(PropertyGroup):
     operation_index: IntProperty(name="原文件序号", default=-1)
     editable: BoolProperty(default=False)
+    auto_rest_offset: BoolProperty(default=False)
     target_bone: IntProperty(name="Target", default=-1)
     source_bone: IntProperty(name="Source", default=-1)
     target_name: StringProperty(name="Target")
@@ -234,6 +300,7 @@ def _populate_item(item, operation, description, status, mapping):
     item.name = f"#{operation.index:03d} {description.name}" if operation.index >= 0 else f"新增 {description.name}"
     item.operation_index = operation.index
     item.editable = is_editable_swing_twist(operation)
+    item.auto_rest_offset = status == "approximate_unchecked"
     item.target_bone = operation.target_bone
     item.source_bone = operation.source_bone
     item.target_name = _display_bone(operation.target_bone, mapping)
@@ -271,7 +338,7 @@ def _operation_from_item(item, armature, index: int) -> SopOperation:
     source = _bone_id(armature, item.source_ref)
     if target == source:
         raise ValueError("SOP 目标骨和来源骨不能相同")
-    return update_swing_twist_operation(
+    operation = update_swing_twist_operation(
         operation,
         target_bone=target,
         source_bone=source,
@@ -279,6 +346,15 @@ def _operation_from_item(item, armature, index: int) -> SopOperation:
         swing_rate=item.swing_rate,
         twist_rate=item.twist_rate,
     )
+    target_data = armature.data.bones.get(item.target_ref)
+    needs_auto_rest_offset = item.auto_rest_offset or (
+        target_data is not None and target_data.get("gbfr_rest_quaternion") is None
+    )
+    if needs_auto_rest_offset:
+        operation = _fit_operation_rest_offset(
+            armature, operation, item.target_ref, item.source_ref,
+        )
+    return operation
 
 
 def _same_path(left: Path, right: Path) -> bool:
@@ -346,7 +422,10 @@ def _sync_workspace_paths(state, bundle: ModelBundle) -> None:
     state.source_baseline_path = str(bundle.sop_source or "")
 
 
-def _add_copy_rotation(armature, target_name, source_name, operation_index, label, axes, rate):
+def _add_copy_rotation(
+    armature, target_name, source_name, operation_index, label, axes, rate,
+    *, inversions=None, target_space="LOCAL",
+):
     target = armature.pose.bones.get(target_name)
     if target is None or source_name not in armature.pose.bones:
         return 0
@@ -354,16 +433,31 @@ def _add_copy_rotation(armature, target_name, source_name, operation_index, labe
     constraint.name = f"{CONSTRAINT_PREFIX}#{operation_index:03d} {label} [近似]"
     constraint.target = armature
     constraint.subtarget = source_name
-    constraint.target_space = "LOCAL"
+    constraint.target_space = target_space
     constraint.owner_space = "LOCAL"
     constraint.mix_mode = "BEFORE"
     constraint.show_expanded = False
     constraint.use_x, constraint.use_y, constraint.use_z = axes
-    constraint.invert_x = rate < 0.0 and axes[0]
-    constraint.invert_y = rate < 0.0 and axes[1]
-    constraint.invert_z = rate < 0.0 and axes[2]
+    if inversions is None:
+        inversions = tuple(rate < 0.0 and enabled for enabled in axes)
+    constraint.invert_x, constraint.invert_y, constraint.invert_z = inversions
     constraint.influence = min(abs(float(rate)), 1.0)
     return 1
+
+
+def _mapped_owner_axes(operation: SopOperation, source_axes, rate):
+    offset = _operation_offset_quaternion(operation)
+    axes = [False, False, False]
+    inversions = [False, False, False]
+    for source_axis in source_axes:
+        vector = Vector(tuple(float(index == source_axis) for index in range(3)))
+        mapped = offset.inverted() @ vector
+        owner_axis = max(range(3), key=lambda index: abs(mapped[index]))
+        if abs(mapped[owner_axis]) < 0.95 or axes[owner_axis]:
+            return None
+        axes[owner_axis] = True
+        inversions[owner_axis] = mapped[owner_axis] * rate < 0.0
+    return tuple(axes), tuple(inversions)
 
 
 def _create_approximate_constraints(armature, operation, mapping):
@@ -375,17 +469,29 @@ def _create_approximate_constraints(armature, operation, mapping):
     twist_rate = operation.floating(TWIST_RATE_PROPERTY)
     if twist_rate is None:
         return 0
-    twist_axes = tuple(index == axis for index in range(3))
     count = 0
     if operation.type_hash == SWING_TWIST_OPERATION:
         swing_rate = operation.floating(SWING_RATE_PROPERTY)
         if swing_rate is None:
             return 0
-        swing_axes = tuple(index != axis for index in range(3))
         if abs(swing_rate) > 1e-8:
-            count += _add_copy_rotation(armature, target, source, operation.index, "Swing", swing_axes, swing_rate)
+            mapped = _mapped_owner_axes(
+                operation, tuple(index for index in range(3) if index != axis), swing_rate,
+            )
+            if mapped is None:
+                return 0
+            count += _add_copy_rotation(
+                armature, target, source, operation.index, "Swing", mapped[0], swing_rate,
+                inversions=mapped[1], target_space="LOCAL_OWNER_ORIENT",
+            )
     if abs(twist_rate) > 1e-8:
-        count += _add_copy_rotation(armature, target, source, operation.index, "Twist", twist_axes, twist_rate)
+        mapped = _mapped_owner_axes(operation, (axis,), twist_rate)
+        if mapped is None:
+            return 0
+        count += _add_copy_rotation(
+            armature, target, source, operation.index, "Twist", mapped[0], twist_rate,
+            inversions=mapped[1], target_space="LOCAL_OWNER_ORIENT",
+        )
     return count
 
 
@@ -562,6 +668,9 @@ class GBFR_OT_SopAdd(Operator):
                 raise ValueError("SOP 目标骨和来源骨不能相同")
             operation = make_swing_twist_operation(
                 target, source, int(self.axis), self.swing_rate, self.twist_rate,
+            )
+            operation = _fit_operation_rest_offset(
+                armature, operation, self.target_ref, self.source_ref,
             )
         except ValueError as error:
             self.report({"ERROR"}, str(error))

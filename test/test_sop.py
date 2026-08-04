@@ -86,5 +86,45 @@ class SopTests(unittest.TestCase):
                 loaded.operations[1].type_hash,
                 loaded.operations[1].properties[0].raw_value,
             ))
+
+    def test_create_and_update_rest_offset(self):
+        operation = make_swing_twist_operation(
+            0xA51, 0x00E, 1, 0.75, 0.25,
+            offset_xyz=(math.pi * 0.5, 0.0, 0.0),
+        )
+        self.assertAlmostEqual(math.pi * 0.5, operation.floating(OFFSET_X_PROPERTY), places=6)
+        self.assertAlmostEqual(0.0, operation.floating(OFFSET_Y_PROPERTY), places=6)
+        self.assertAlmostEqual(0.0, operation.floating(OFFSET_Z_PROPERTY), places=6)
+
+        edited = update_swing_twist_operation(
+            operation, target_bone=0xA51, source_bone=0x00E,
+            axis=2, swing_rate=0.5, twist_rate=0.1,
+        )
+        self.assertAlmostEqual(math.pi * 0.5, edited.floating(OFFSET_X_PROPERTY), places=6)
+
+        reset = update_swing_twist_operation(
+            edited, target_bone=0xA51, source_bone=0x00E,
+            axis=2, swing_rate=0.5, twist_rate=0.1,
+            offset_xyz=(0.1, 0.2, 0.3),
+        )
+        self.assertAlmostEqual(0.1, reset.floating(OFFSET_X_PROPERTY), places=6)
+        self.assertAlmostEqual(0.2, reset.floating(OFFSET_Y_PROPERTY), places=6)
+        self.assertAlmostEqual(0.3, reset.floating(OFFSET_Z_PROPERTY), places=6)
+
+        without_offsets = SopOperation(
+            operation.index, operation.type_hash, operation.metadata,
+            operation.target_bone, operation.source_bone,
+            tuple(value for value in operation.properties if value.hash not in {
+                OFFSET_X_PROPERTY, OFFSET_Y_PROPERTY, OFFSET_Z_PROPERTY,
+            }),
+        )
+        restored = update_swing_twist_operation(
+            without_offsets, target_bone=0xA51, source_bone=0x00E,
+            axis=1, swing_rate=0.75, twist_rate=0.25,
+            offset_xyz=(0.4, 0.5, 0.6),
+        )
+        self.assertAlmostEqual(0.4, restored.floating(OFFSET_X_PROPERTY), places=6)
+        self.assertAlmostEqual(0.5, restored.floating(OFFSET_Y_PROPERTY), places=6)
+        self.assertAlmostEqual(0.6, restored.floating(OFFSET_Z_PROPERTY), places=6)
 if __name__ == "__main__":
     unittest.main()

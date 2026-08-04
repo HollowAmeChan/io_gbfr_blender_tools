@@ -91,11 +91,14 @@ def make_swing_twist_operation(
     twist_rate: float,
     *,
     index: int = -1,
+    offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> SopOperation:
     if axis not in {0, 1, 2}:
         raise ValueError("SOP 旋转轴必须是 X、Y 或 Z")
     if target_bone < 0 or source_bone < 0:
         raise ValueError("SOP target/source 骨骼 ID 无效")
+    if len(offset_xyz) != 3:
+        raise ValueError("SOP offset 必须包含 X、Y、Z")
     axes = tuple(1.0 if value == axis else 0.0 for value in range(3))
     return SopOperation(
         index=index,
@@ -110,9 +113,9 @@ def make_swing_twist_operation(
             _float_property(AXIS_Z_PROPERTY, axes[2]),
             _float_property(TWIST_RATE_PROPERTY, twist_rate),
             _float_property(SWING_RATE_PROPERTY, swing_rate),
-            _float_property(OFFSET_X_PROPERTY, 0.0),
-            _float_property(OFFSET_Y_PROPERTY, 0.0),
-            _float_property(OFFSET_Z_PROPERTY, 0.0),
+            _float_property(OFFSET_X_PROPERTY, offset_xyz[0]),
+            _float_property(OFFSET_Y_PROPERTY, offset_xyz[1]),
+            _float_property(OFFSET_Z_PROPERTY, offset_xyz[2]),
         ),
     )
 
@@ -136,6 +139,7 @@ def update_swing_twist_operation(
     axis: int,
     swing_rate: float,
     twist_rate: float,
+    offset_xyz: tuple[float, float, float] | None = None,
 ) -> SopOperation:
     if not is_editable_swing_twist(operation):
         raise ValueError("只能编辑字段完整的 Swing/Twist SOP 操作")
@@ -150,10 +154,25 @@ def update_swing_twist_operation(
         SWING_RATE_PROPERTY: swing_rate,
         TWIST_RATE_PROPERTY: twist_rate,
     }
+    if offset_xyz is not None:
+        if len(offset_xyz) != 3:
+            raise ValueError("SOP offset 必须包含 X、Y、Z")
+        replacements.update({
+            OFFSET_X_PROPERTY: offset_xyz[0],
+            OFFSET_Y_PROPERTY: offset_xyz[1],
+            OFFSET_Z_PROPERTY: offset_xyz[2],
+        })
     properties = tuple(
         _float_property(value.hash, replacements[value.hash]) if value.hash in replacements else value
         for value in operation.properties
     )
+    if offset_xyz is not None:
+        existing = {value.hash for value in properties}
+        properties += tuple(
+            _float_property(property_hash, replacements[property_hash])
+            for property_hash in (OFFSET_X_PROPERTY, OFFSET_Y_PROPERTY, OFFSET_Z_PROPERTY)
+            if property_hash not in existing
+        )
     return SopOperation(
         index=operation.index,
         type_hash=operation.type_hash,
