@@ -192,6 +192,23 @@ with tempfile.TemporaryDirectory() as temporary:
     assert len(sop_drivers("Skirt_C_01")) == 4
     angled_operation = _asset_from_state(armature).operations[1]
     assert_exact_pose(angled_operation, "Skirt_C_01", "_00e")
+
+    assert bpy.ops.gbfr.sop_add(
+        constraint_type="SKIRT_COPY_ROTATION",
+        target_ref="Skirt_C_01", source_ref="_00e", axis="1",
+        swing_rate=0.5, twist_rate=0.0,
+    ) == {"FINISHED"}
+    assert state.operations[1].preview_status == "multiple_target_operations"
+    assert state.operations[2].preview_status == "multiple_target_operations"
+    assert not sop_drivers("Skirt_C_01")
+    assert not [
+        constraint for constraint in armature.pose.bones["Skirt_C_01"].constraints
+        if constraint.name.startswith(CONSTRAINT_PREFIX)
+    ]
+    assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
+    assert len(state.operations) == 2
+    assert state.operations[1].preview_status == "exact_driver"
+    assert len(sop_drivers("Skirt_C_01")) == 4
     assert bpy.ops.gbfr.sop_delete() == {"FINISHED"}
     assert len(state.operations) == 1
     assert not sop_drivers("Skirt_C_01")

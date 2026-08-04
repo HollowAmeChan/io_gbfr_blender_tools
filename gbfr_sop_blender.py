@@ -44,6 +44,7 @@ STATUS_LABELS = {
     "not_implemented": "公式未探明，只读导入",
     "missing_bone": "引用骨骼缺失，未执行",
     "invalid_core_fields": "核心字段不完整，未执行",
+    "multiple_target_operations": "同一目标骨存在多重 SOP；仅不支持 Blender 预览，导出不受影响",
     "zero_effect": "Swing/Twist 比例均为 0，无预览效果",
 }
 AXIS_ITEMS = (
@@ -705,6 +706,10 @@ def rebuild_sop_preview(armature) -> None:
         item.target_name = _display_bone(operation.target_bone, mapping)
         item.source_name = _display_bone(operation.source_bone, mapping)
         item.preview_status = status
+        if target_counts.get(operation.target_bone, 0) > 1:
+            item.preview_status = "multiple_target_operations"
+            state.guarded_count += 1
+            continue
         if status in {"approximate_constraint", "approximate_unchecked"}:
             swing_rate = operation.floating(SWING_RATE_PROPERTY, 0.0) or 0.0
             twist_rate = operation.floating(TWIST_RATE_PROPERTY, 0.0) or 0.0
@@ -712,10 +717,9 @@ def rebuild_sop_preview(armature) -> None:
                 item.preview_status = "zero_effect"
                 continue
             created = 0
-            if target_counts.get(operation.target_bone) == 1:
-                created = _create_exact_drivers(armature, operation, mapping)
-                if created:
-                    item.preview_status = "exact_driver"
+            created = _create_exact_drivers(armature, operation, mapping)
+            if created:
+                item.preview_status = "exact_driver"
             if not created:
                 created = _create_approximate_constraints(armature, operation, mapping)
             state.imported_constraint_count += created
@@ -1044,6 +1048,7 @@ class GBFR_UL_SopOperations(UIList):
             "not_implemented": "LOCKED",
             "missing_bone": "BONE_DATA",
             "invalid_core_fields": "ERROR",
+            "multiple_target_operations": "ERROR",
             "zero_effect": "INFO",
         }
         icon = icons.get(item.preview_status, "QUESTION")
