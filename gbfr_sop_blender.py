@@ -802,7 +802,9 @@ class GBFR_PT_SopInspector(Panel):
 
         layout.prop(state, "operation_search", text="", icon="VIEWZOOM")
         filters = layout.row(align=True)
-        filters.prop(state, "operation_filter", text="", expand=True)
+        filters.prop_enum(state, "operation_filter", "ALL", text="全部")
+        filters.prop_enum(state, "operation_filter", "EDITABLE", text="可编辑")
+        filters.prop_enum(state, "operation_filter", "READ_ONLY", text="只读")
 
         header = layout.split(factor=0.66)
         header.label(text="约束骨骼")
