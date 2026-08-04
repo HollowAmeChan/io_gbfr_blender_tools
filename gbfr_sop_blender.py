@@ -20,8 +20,10 @@ from .gbfr_sop import (
     load_catalog, load_sop, make_swing_twist_operation, save_sop,
     update_swing_twist_operation,
 )
-from .gbfr_workspace import ModelBundle, resolve_model_bundle
-from .gbfr_session import active_session_armature, active_session_collection
+from .gbfr_workspace import ModelBundle
+from .gbfr_session import (
+    active_session_armature, active_session_collection, resolve_session_bundle,
+)
 from .utils import bone_names_mapping
 
 
@@ -313,6 +315,18 @@ def _model_export_ready(context, state) -> bool:
     return resolved.is_file() and expected.is_file() and _same_path(resolved, expected)
 
 
+def _active_sop_bundle(context) -> ModelBundle:
+    return resolve_session_bundle(
+        active_session_collection(context), require_cloth_xml=False,
+    )
+
+
+def _sync_workspace_paths(state, bundle: ModelBundle) -> None:
+    state.minfo_path = str(bundle.minfo)
+    state.edit_path = str(bundle.sop_edit)
+    state.source_baseline_path = str(bundle.sop_source or "")
+
+
 def _add_copy_rotation(armature, target_name, source_name, operation_index, label, axes, rate):
     target = armature.pose.bones.get(target_name)
     if target is None or source_name not in armature.pose.bones:
@@ -472,7 +486,7 @@ class GBFR_OT_SopReload(Operator):
         if armature is None:
             return {"CANCELLED"}
         try:
-            populate_sop_state(armature, resolve_model_bundle(armature.gbfr_sop.minfo_path))
+            populate_sop_state(armature, _active_sop_bundle(context))
         except Exception as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
@@ -585,12 +599,14 @@ class GBFR_OT_SopSave(Operator):
         if armature is None:
             return {"CANCELLED"}
         state = armature.gbfr_sop
-        target = Path(state.edit_path)
         try:
+            bundle = _active_sop_bundle(context)
+            _sync_workspace_paths(state, bundle)
+            target = bundle.sop_edit
             if not _model_export_ready(context, state):
                 raise ValueError("请先导出一份当前主体到 unpack，再单独导出 SOP")
             export_sop_to_unpack(armature)
-            populate_sop_state(armature, resolve_model_bundle(state.minfo_path))
+            populate_sop_state(armature, _active_sop_bundle(context))
         except Exception as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
@@ -621,11 +637,15 @@ class GBFR_OT_SopRestoreSource(Operator):
             return {"CANCELLED"}
         state = armature.gbfr_sop
         try:
-            source = Path(state.source_baseline_path)
+            bundle = _active_sop_bundle(context)
+            _sync_workspace_paths(state, bundle)
+            source = bundle.sop_source
+            if source is None:
+                raise ValueError("工作区没有登记 source SOP 基线")
             if not source.is_file():
                 raise ValueError("工作区没有可用的 source SOP 基线")
             populate_sop_state(
-                armature, resolve_model_bundle(state.minfo_path), load_path_override=source,
+                armature, bundle, load_path_override=source,
             )
         except Exception as error:
             state.last_status = str(error)

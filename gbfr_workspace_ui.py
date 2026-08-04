@@ -10,9 +10,9 @@ from bpy.types import Menu, Operator, Panel
 
 from .gbfr_session import (
     activate_session, active_session_armature, active_session_collection,
-    active_session_mesh, active_session_meshes, active_session_root, session_collections,
+    active_session_mesh, active_session_meshes, active_session_root,
+    resolve_session_bundle, session_collections,
 )
-from .gbfr_workspace import resolve_model_bundle
 
 
 class GBFR_MT_Sessions(Menu):
@@ -91,11 +91,8 @@ class GBFR_OT_RestoreSessionData(Operator):
         if collection is None or not meshes:
             return {"CANCELLED"}
         state = collection.gbfr_session
-        selected = Path(state.resolved_minfo_path)
-        if not selected.is_file():
-            selected = Path(state.source_minfo_path)
         try:
-            bundle = resolve_model_bundle(selected, state.workspace_path)
+            bundle = resolve_session_bundle(collection)
             from .gbfr_material_blender import apply_workspace_materials
             from .gbfr_cloth_blender import populate_cloth_state
             from .gbfr_sop_blender import populate_sop_state

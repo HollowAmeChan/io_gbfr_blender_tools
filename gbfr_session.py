@@ -85,6 +85,29 @@ def active_session_collection(context):
     return sessions[0] if len(sessions) == 1 else None
 
 
+def resolve_session_bundle(collection, *, require_cloth_xml: bool = True):
+    """Resolve the current model from the collection-scoped workspace session."""
+    from .gbfr_workspace import WorkspaceError, resolve_model_bundle
+
+    if collection is None or not collection.gbfr_session.enabled:
+        raise WorkspaceError("请先激活一个 minfo 工作区")
+    state = collection.gbfr_session
+    selected = next(
+        (
+            Path(value).expanduser()
+            for value in (state.resolved_minfo_path, state.source_minfo_path)
+            if value.strip() and Path(value).expanduser().is_file()
+        ),
+        None,
+    )
+    if selected is None:
+        raise WorkspaceError("当前工作区的 minfo 基线不存在")
+    workspace_path = state.workspace_path.strip() or None
+    return resolve_model_bundle(
+        selected, workspace_path, require_cloth_xml=require_cloth_xml,
+    )
+
+
 def active_session_armature(context):
     collection = active_session_collection(context)
     if collection is None:

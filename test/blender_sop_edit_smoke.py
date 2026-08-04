@@ -79,10 +79,14 @@ with tempfile.TemporaryDirectory() as temporary:
     state = armature.gbfr_sop
     assert state.enabled and len(state.operations) == 1
     assert not (root / paths["unpack_sop"]).exists()
-    edit_path = state.edit_path
+    state.minfo_path = ""
     state.edit_path = ""
+    state.source_baseline_path = ""
     assert not _model_export_ready(bpy.context, state)
-    state.edit_path = edit_path
+    assert bpy.ops.gbfr.sop_reload() == {"FINISHED"}
+    assert Path(state.minfo_path) == root / paths["source_minfo"]
+    assert Path(state.edit_path) == root / paths["unpack_sop"]
+    assert Path(state.source_baseline_path) == source_sop
 
     item = state.operations[0]
     item.swing_rate = 0.6
@@ -99,6 +103,9 @@ with tempfile.TemporaryDirectory() as temporary:
     assert abs(load_sop(staged).operations[0].floating(SWING_RATE_PROPERTY) - 0.6) < 1e-6
     assert not (root / paths["unpack_sop"]).exists()
 
+    state.minfo_path = ""
+    state.edit_path = ""
+    state.source_baseline_path = ""
     try:
         bpy.ops.gbfr.sop_save()
         raise AssertionError("source 主体不应允许单独导出 SOP")
@@ -114,6 +121,8 @@ with tempfile.TemporaryDirectory() as temporary:
     exported_bytes = unpack_sop.read_bytes()
 
     armature.gbfr_sop.operations[0].swing_rate = 0.7
+    state.minfo_path = ""
+    state.source_baseline_path = ""
     result = bpy.ops.gbfr.sop_restore_source("EXEC_DEFAULT")
     assert result == {"FINISHED"}, result
     assert unpack_sop.read_bytes() == exported_bytes, "恢复 source 不应自动写文件"
